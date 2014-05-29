@@ -7,7 +7,8 @@
              ;[clj-time.format :as cf]
              ))
 
-(def uri "datomic:free://localhost:4334/bitemp")
+#_(def uri "datomic:free://localhost:4334/bitemp")
+(def uri "datomic:ddb://us-east-1/your-system-name/bitemp")
 
 #_(def conn (d/connect uri))
 
@@ -158,8 +159,8 @@ Returns a list of transaction times"
                                                    tv (jd (* 10  j))
                                                    v  (str k "v" j "t" i)]
                                         ;(println "Inserting" k "(" tv ") = " v)
-                                               [k tv v])))))))]
-    tts ;[(first txs) (last txs)]
+                                               [k tv v]))))))) ]
+    (doall tts)                              ;[(first txs) (last txs)]
     ))
 
 (defn query-lots [conn nKeys nTv tts n]

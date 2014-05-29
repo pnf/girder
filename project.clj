@@ -8,4 +8,8 @@
   :dependencies [[org.clojure/clojure "1.6.0"]
                  [digest "1.4.4"]
                  [clj-time "0.7.0"]
-                 [com.datomic/datomic-free "0.9.4755" :exclusions [[org.slf4j/log4j-over-slf4j]]]])
+                 [com.datomic/datomic-pro "0.9.4766.11" :exclusions [[org.slf4j/log4j-over-slf4j]]]]
+
+  :jvm-opts  ^:replace ["-Xmx1g" "-server" ] 
+
+)
