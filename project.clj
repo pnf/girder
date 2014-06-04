@@ -8,9 +8,13 @@
   :dependencies [[org.clojure/clojure "1.6.0"]
                  [digest "1.4.4"]
                  [clj-time "0.7.0"]
-                ;[amazonica "0.2.16"]
+                 [amazonica "0.2.16"]
+                 [clj-ssh "0.5.10"]
+                 [org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [com.datomic/datomic-pro "0.9.4766.11" :exclusions [[org.slf4j/log4j-over-slf4j]]]
-                 [org.clojure/tools.cli "0.3.1"]]
+                 [org.clojure/tools.cli "0.3.1"]
+
+]
 
   :jvm-opts  ^:replace ["-Xmx1g" "-server" ] 
   :source-paths ["src"]
