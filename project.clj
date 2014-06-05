@@ -19,5 +19,8 @@
   :jvm-opts  ^:replace ["-Xmx1g" "-server" ] 
   :source-paths ["src"]
 
+
+  :aot :all
+  :uberjar-name "girder.jar"
   :main girder.core
 )
