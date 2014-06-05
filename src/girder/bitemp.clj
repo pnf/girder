@@ -46,7 +46,7 @@
 )
 
 
-(defn recreate-db []
+(defn recreate-db [uri]
   (d/delete-database uri)
   (d/create-database uri)
   (let [conn (d/connect uri)]
@@ -57,7 +57,7 @@
                         :db.install/_partition :db.part/db}])
     conn))
 
-(defn connect []
+(defn connect [uri]
   (let [conn (d/connect uri)]
     @(d/sync conn)
     conn))
@@ -148,22 +148,22 @@
 
 (defn test-val [k i j] (str "k" k "v" i "r" j))
 
-(defn insert-lots [conn nKeys nTv nTt]
+(defn insert-lots [conn k0 nKeys nTv nTt]
   "Insert lots of stuff.  nKeys unique keys, nTv tv's, nTt nt's in batches of nKeys.
 Returns a list of transaction times"
-  (let [tts (for [i   (range nTt)]
+  (let [tts (for [i (range nTt)]
               (last  (for [j   (range nTv)]
                        (do  (insert-values conn
-                                           (for [k (range nKeys)]
+                                           (for [k (range k0 (+ k0  nKeys))]
                                              (let [k  (str "Thing" k)
                                                    tv (jd (* 10  j))
                                                    v  (str k "v" j "t" i)]
-                                        ;(println "Inserting" k "(" tv ") = " v)
+                                               ;(println "Inserting" k "(" tv ") = " v)
                                                [k tv v]))))))) ]
     (doall tts)                              ;[(first txs) (last txs)]
     ))
 
-(defn query-lots [conn nKeys nTv tts n]
+(defn query-lots [conn k0 nKeys nTv tts n]
   (let [tts (vec tts)
         nTt  (count tts)]
     (dotimes [_ n]
@@ -171,11 +171,11 @@ Returns a list of transaction times"
             tt (get tts i)
             j  (rand-int nTv)
             tv (jd  (* 10 j))
-            k  (str "Thing" (rand-int nKeys))
+            k  (str "Thing" (+ k0  (rand-int nKeys)))
             v  (second (get-at conn k tv tt))
-            ve (str k "v" j "t" i) ]
-        ;(println "Querying" k "(" tv "," tt ") = " v "=?=" ve)
-        (assert (= v ve))
+            ve (str k "v" j "t" i)
+            msg (str "Querying " k "(" tv "," tt ") = " v "=?=" ve)]
+        (when (not= v ve) (throw (Exception. msg)))
         ))))
 
 
