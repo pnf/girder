@@ -4,7 +4,7 @@
         )
   (:require [clj-ssh.ssh :as ssh]
             [ clojure.core.async :as async 
-             :refer [<! >! <!! timeout chan alt!! go close!]]))
+             :refer [<! >! <!! >!! timeout chan alt!! go close!]]))
 
 (def cred (read-string (slurp "AWS.clj")))
 
@@ -15,7 +15,7 @@
 ; "IamInstanceProfile" : {"Arn" : "arn:aws:iam::633840533036:instance-profile/datomic-aws-peer" }
 
 
-(defn requests [n]
+(defn make-requests [n]
   (let [r (request-spot-instances
            :spot-price 			"0.005"
            :instance-count 		n
@@ -31,12 +31,7 @@
 
 (defn monitor-status [rs]
   (loop [prev nil]
-    
-
-)
- 
-
-)
+ ))
 
 
 (defn request-status [rs]
@@ -65,26 +60,59 @@
                             :username "ec2-user"})
        hosts))
 
+(defn escapify [x] 
+  (let [x (if (string? x) x (pr-str x))
+        x (if (re-matches #"[0-9a-zA-z-_\.]+" x) x (pr-str x))]
+    x))
+
+(defn commandify [cmd]
+  (cond (string? cmd) cmd
+        (seq cmd) (clojure.string/join " " (map escapify cmd))))
+
 (defn ex [sess cmd]
   (or (ssh/connected? sess) (ssh/connect sess))
-  (ssh/ssh-exec sess cmd "" "" {}))
+  (ssh/ssh-exec sess (commandify cmd) "" "" {}))
 
 (defn ex-async [sess cmd c]
   (or (ssh/connected? sess) (ssh/connect sess))
-  (go (>! c (ssh/ssh-exec sess cmd "" "" {})))
+  (go (>! c (ssh/ssh-exec sess (commandify cmd) "" "" {})))
   c)
 
+
+(comment
+
+(def out (ex (first sessions) ["java" "-jar" "girder.jar" "--opts" {:command "insert-lots" :nTt 10 :nTv 10 :nKeys 10}]))
+
+(def out (ex (first sessions) ["java" "-jar" "girder.jar" "--opts" {:command "insert-lots" :nTt 10 :nTv 10 :nKeys 10 :uri girder.bitemp/uri}]))
+
+
+(def ts (:result (read-string (:out out))))
+
+
+(comment
+
+(def n 2)
+(def nKeys 10)
+(def nTv 10)
+(def nTt 10)
+
+(def rs make-requests)
+(request-status rs)
+(def is request-instances rs)
+(def hosts dns-names is)
+(def sessions ssh-sessions hosts)
+
+(def insert-opts {:command "insert-lots" :nTt nTt :nTv nTv :nKeys nKeys}) ; :k0
+(def query-opts {:command "query-lots" :nTv nTv :nKeys nKeys :num 1000});  :k0 :Tts
+
+(def c (chan))
+
+
+(doseq [[i s] (map vector (range n) sessions)]
+  (ex-async s ["java" "-jar" "girder.jar" "--opts" (assoc insert-opts :k0 (* nKeys i))] c)))
 
 
 ;(map disconnect ss)
 ;(describe-spot-instance-requests :spot-instance-request-ids r)
 ; (filter #(= "sir-b7586249" (:spot-instance-request-id %)) (get-in d [:spot-instance-requests]))
 
-#_(def prepare-cmds
-  "cd $HOME/girder
-git pull
-$HOME/bin/lein deps
-$HOME/bin/lein compile
-$HOME/bin/lein run --nTt 10")
-
-(def get-jar )
