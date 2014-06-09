@@ -15,7 +15,8 @@
 ; "IamInstanceProfile" : {"Arn" : "arn:aws:iam::633840533036:instance-profile/datomic-aws-peer" }
 
 
-(defn make-requests [n]
+
+(defn request-spots [n]
   (let [r (request-spot-instances
            :spot-price 			"0.005"
            :instance-count 		n
@@ -29,10 +30,28 @@
             :iam-instance-profile       {:arn "arn:aws:iam::633840533036:instance-profile/girder-peer"}})]
     (map :spot-instance-request-id  (:spot-instance-requests r))))
 
-(defn monitor-status [rs]
-  (loop [prev nil]
- ))
 
+(defn patience [pred genfn msec tout]
+  (let [c    (chan)]
+    (close! (async/go-loop []
+               (let [r (genfn)]
+                 (if (or (pred r) (not (first (async/alts! [tout] :default true))))
+                   (do (println "Returning" r)
+                       (>! c r) (close! c))
+                   (do 
+                     (println "Got" r "...waiting" msec)
+                     (<! (timeout msec))
+                     (recur))))))
+    c))
+
+(defn patience-every [pred collfn msec tout]
+  (patience #(every? pred %) collfn msec tout))
+
+(defn pluck [c]
+  (let [a (atom nil)]
+    (close! (go (let [x (<! c)]
+                  (reset! a x))))
+    a))
 
 (defn request-status [rs]
   (let [d (describe-spot-instance-requests :spot-instance-request-ids rs)]
@@ -60,6 +79,28 @@
                             :username "ec2-user"})
        hosts))
 
+
+(defn bring-up-aws
+  "Bring up n AWS t1.micro instances and return ssh sessions"
+  [n]
+  (let [c    (chan)
+        tout (timeout (* 60 1000 10))]
+    (go 
+      (let [rs       (request-spots n)
+            _        (println "requests" rs)
+            _        (<! (timeout 1000))
+            ss       (<! (patience-every #(= "active" %) #(request-status rs) 60000 tout))
+            _        (println "Requesting instances for" rs)
+            is       (request-instances rs)
+            _        (println "instances" is)
+            hosts    (dns-names is)
+            _        (println "hosts" hosts)
+            sessions (ssh-sessions hosts)
+            _        (println "Done!")]
+        (>! c {:instances is :hosts hosts :sessions sessions}) (close! c)))
+    [c tout]))
+
+
 (defn escapify [x] 
   (let [x (if (string? x) x (pr-str x))
         x (if (re-matches #"[0-9a-zA-z-_\.]+" x) x (pr-str x))]
@@ -73,46 +114,12 @@
   (or (ssh/connected? sess) (ssh/connect sess))
   (ssh/ssh-exec sess (commandify cmd) "" "" {}))
 
-(defn ex-async [sess cmd c]
+(defn ex-async [sess cmd]
   (or (ssh/connected? sess) (ssh/connect sess))
-  (go (>! c (ssh/ssh-exec sess (commandify cmd) "" "" {})))
-  c)
-
-
-(comment
-
-(def out (ex (first sessions) ["java" "-jar" "girder.jar" "--opts" {:command "insert-lots" :nTt 10 :nTv 10 :nKeys 10}]))
-
-(def out (ex (first sessions) ["java" "-jar" "girder.jar" "--opts" {:command "insert-lots" :nTt 10 :nTv 10 :nKeys 10 :uri girder.bitemp/uri}]))
-
-
-(def ts (:result (read-string (:out out))))
-
-
-(comment
-
-(def n 2)
-(def nKeys 10)
-(def nTv 10)
-(def nTt 10)
-
-(def rs make-requests)
-(request-status rs)
-(def is request-instances rs)
-(def hosts dns-names is)
-(def sessions ssh-sessions hosts)
-
-(def insert-opts {:command "insert-lots" :nTt nTt :nTv nTv :nKeys nKeys}) ; :k0
-(def query-opts {:command "query-lots" :nTv nTv :nKeys nKeys :num 1000});  :k0 :Tts
-
-(def c (chan))
-
-
-(doseq [[i s] (map vector (range n) sessions)]
-  (ex-async s ["java" "-jar" "girder.jar" "--opts" (assoc insert-opts :k0 (* nKeys i))] c)))
-
-
-;(map disconnect ss)
-;(describe-spot-instance-requests :spot-instance-request-ids r)
-; (filter #(= "sir-b7586249" (:spot-instance-request-id %)) (get-in d [:spot-instance-requests]))
-
+  (let [c (chan)]
+    (go (let [cmd (commandify cmd)
+              _   (println "Running in" sess cmd)
+              res (ssh/ssh-exec sess cmd "" "" {})]
+          (println "Returning from" sess res)
+          (>! c res) (close! c)))
+    c))
