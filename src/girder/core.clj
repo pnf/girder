@@ -5,48 +5,13 @@
 
 )
 
-#_(def cli-options
-  [;; First three strings describe a short-option, long-option with optional
-   ;; example argument description, and a description. All three are optional
-   ;; and positional.
-   ["-p" "--port PORT" "Port number"
-    :default 80
-    :parse-fn #(Integer/parseInt %)
-    :validate [#(< 0 % 0x10000) "Must be a number between 0 and 65536"]]
-   ["-H" "--hostname HOST" "Remote host"
-    :default (InetAddress/getByName "localhost")
-    ;; Specify a string to output in the default column in the options summary
-    ;; if the default value's string representation is very ugly
-    :default-desc "localhost"
-    :parse-fn #(InetAddress/getByName %)]
-   ;; If no required argument description is given, the option is assumed to
-   ;; be a boolean option defaulting to nil
-   [nil "--detach" "Detach from controlling process"]
-   ["-v" nil "Verbosity level; may be specified multiple times to increase value"
-    ;; If no long-option is specified, an option :id must be given
-    :id :verbosity
-    :default 0
-    ;; Use assoc-fn to create non-idempotent options
-    :assoc-fn (fn [m k _] (update-in m [k] inc))]
-   ["-h" "--help"]])
-
-#_(def cli-options
-  ;; An option with a required argument
-  [["-p" "--port PORT" "Port number"
-    :default 80
-    :parse-fn #(Integer/parseInt %)
-    :validate [#(< 0 % 0x10000) "Must be a number between 0 and 65536"]]
-   ;; A non-idempotent option
-   ["-v" nil "Verbosity level"
-    :id :verbosity
-    :default 0
-    :assoc-fn (fn [m k _] (update-in m [k] inc))]
-   ;; A boolean option defaulting to nil
-   ["-h" "--help"]])
 
 (def commands #{"recreate" "insert-lots" "query-lots"})
 
-(defmacro timeit [& forms]
+(defmacro timeit
+  "Evaluate forms within a try/catch block, returning a map containing :result or :exception as
+appropriate, and the elapsed :time in msec."
+  [& forms]
   `(let [t1#  (.getTime (java.util.Date.))
          res# (try {:result (do ~@forms)}
                    (catch Exception e# {:exception e#}))
@@ -55,8 +20,8 @@
      (merge {:time dt#} res#)))
 
 (def cli-options
-  [[nil "--repl" "When running in REPL"]
-   ["-o" "--opts OPTS" "All options as EDN string"
+  [[nil "--repl" "Set when running in REPL, so exit isn't called"]
+   ["-o" "--opts OPTS" "Multiple options as EDN string, overridden by other parameters on command line."
     :default nil
     :parse-fn read-string]
    ["-c" "--command CMD" "Command"
@@ -90,17 +55,12 @@
     :default 0
     :parse-fn #(Integer/parseInt %)]])
 
-(defn- extract-default [[_ l _ & args]]
-  (let [s (->> l (re-matches #".*--(\w+).*") second keyword)
-        d (and args (:default (apply hash-map args)))]
-    [s d]))
-(def defaults (into {} (map extract-default cli-options)))
 
 (defn -main [& args]
   (let [parsed  (parse-opts args cli-options)
         errs (:errors parsed)
         opts (:options parsed)
-        opts (if (:opts opts) (merge defaults (:opts opts)) opts)
+        opts (merge (dissoc opts :opts) (:opts opts))
         uri  (:uri opts)
         conn (bt/connect uri)
         res  (if errs parsed
