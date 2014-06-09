@@ -31,7 +31,9 @@
     (map :spot-instance-request-id  (:spot-instance-requests r))))
 
 
-(defn patience [pred genfn msec tout]
+(defn patience
+  "Invoke (genfn) every msec until predicate returns true or timeout channel is closed."
+  [pred genfn msec tout]
   (let [c    (chan)]
     (close! (async/go-loop []
                (let [r (genfn)]
@@ -81,7 +83,8 @@
 
 
 (defn bring-up-aws
-  "Bring up n AWS t1.micro instances and return ssh sessions"
+  "Bring up n AWS t1.micro instances and return channel that will contain a single map
+of {:instance ids :hosts names and :sessions objects}."
   [n]
   (let [c    (chan)
         tout (timeout (* 60 1000 10))]
@@ -101,20 +104,29 @@
     [c tout]))
 
 
-(defn escapify [x] 
+(defn EDNify
+"EDN-ify an arbitrary object, leaving it alone if its an innocuous string."
+  [x] 
   (let [x (if (string? x) x (pr-str x))
         x (if (re-matches #"[0-9a-zA-z-_\.]+" x) x (pr-str x))]
     x))
 
-(defn commandify [cmd]
-  (cond (string? cmd) cmd
-        (seq cmd) (clojure.string/join " " (map escapify cmd))))
 
-(defn ex [sess cmd]
+(defn commandify
+  "If cmd is a sequence, convert it into a space-delimited string, EDNifying as necessary."
+  [cmd]
+  (cond (string? cmd) cmd
+        (seq cmd) (clojure.string/join " " (map EDNify cmd))))
+
+(defn ex
+  "Make sure the session is connected and run the command remotely via
+ssh-exec, yielding a map of :exit code, :out string and :err string."
+  [sess cmd]
   (or (ssh/connected? sess) (ssh/connect sess))
   (ssh/ssh-exec sess (commandify cmd) "" "" {}))
 
 (defn ex-async [sess cmd]
+  "As ex, but returns a channel that will contain the map."
   (or (ssh/connected? sess) (ssh/connect sess))
   (let [c (chan)]
     (go (let [cmd (commandify cmd)
