@@ -174,7 +174,7 @@ Returns a list of transaction times"
             k  (str "Thing" (+ k0  (rand-int nKeys)))
             v  (second (get-at conn k tv tt))
             ve (str k "v" j "t" i)
-            msg (str "Querying " k "(" tv "," tt ") = " v "=?=" ve)]
+            msg (str "Querying " k "(" tv "," (pr-str tt) ") = " v "=?=" ve)]
         (when (not= v ve) (throw (Exception. msg)))
         ))))
 
