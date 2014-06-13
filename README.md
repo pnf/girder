@@ -13,7 +13,7 @@ Don't.
 #### Hierarchy of peers.
 Multi layer strategy.  Everybody is a worker.  Everyone maintains queue.
  A. Compute nodes
-   1. Pull work only from own queue.
+   1. Pull work only from own queueu.
    2. Push reentrant requests to own queue.
    3  After making re-entrant request, work through own queue, then block for completion.
    3. Ignore work marked done or in progress.

@@ -24,4 +24,4 @@
   ([name buf] (LoggingBuffer. name buf prn)))
 
 (defn closed? [c] (pimpl/closed? c))
-(def close-all! [cs] (doseq [c cs] (close! c)))
+(defn close-all! [cs] (doseq [c cs] (async/close! c)))
