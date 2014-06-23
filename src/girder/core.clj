@@ -62,13 +62,12 @@ appropriate, and the elapsed :time in msec."
         opts (:options parsed)
         opts (merge (dissoc opts :opts) (:opts opts))
         uri  (:uri opts)
-        conn (bt/connect uri)
         res  (if errs parsed
                (timeit
                 (condp = (:command opts)
                   "recreate"    (bt/recreate-db uri)
-                  "insert-lots" (apply bt/insert-lots conn (map opts [:k0 :nKeys :nTv :nTt]))
-                  "query-lots"  (apply bt/query-lots conn (map opts [:k0 :nKeys :nTv :Tts :num])))))
+                  "insert-lots" (apply bt/insert-lots (bt/connect uri) (map opts [:k0 :nKeys :nTv :nTt]))
+                  "query-lots"  (apply bt/query-lots (bt/connect uri) (map opts [:k0 :nKeys :nTv :Tts :num])))))
         res (assoc res :id (:id opts))]
     (if (:repl opts) res
         (do (println (pr-str res)) (System/exit 0)))))
