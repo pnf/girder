@@ -1,27 +1,31 @@
 (ns girder.async
   (:require [clojure.core.async :as async]
+            [taoensso.timbre :as timbre]
             [clojure.core.async.impl.protocols :as pimpl :refer [Buffer]]))
+(timbre/refer-timbre)
 
-(deftype LoggingBuffer [name buf log]
+(deftype LoggingBuffer [name buf]
   Buffer
   (full? [this] (.full? buf))
   (remove! [this]
-    (log name "removing")
+    (trace name "removing")
     (.remove! buf))
   (add! [this item]
-    (log name "adding" item)
+    (trace name "adding" (pr-str item))
     (.add! buf item))
   clojure.lang.Counted
   (count [this] (count buf)))
 
 (defn logging-buffer
-  ([name log] (LoggingBuffer. name (async/buffer 1) log))
-  ([name buf log] (LoggingBuffer. name buf log))
-)
+  ([name] (LoggingBuffer. name (async/buffer 1)))
+  ([name buf] (LoggingBuffer. name buf)))
 
-(defn printing-buffer
-  ([name] (logging-buffer name (async/buffer 1) prn))
-  ([name buf] (LoggingBuffer. name buf prn)))
+(defn lchan
+  ([name] (async/chan (logging-buffer name)))
+  ([name buf] (async/chan (logging-buffer name buf))))
 
-(defn closed? [c] (pimpl/closed? c))
-(defn close-all! [cs] (doseq [c cs] (async/close! c)))
+(defn still-open? [& cs]
+  (if (not-any? pimpl/closed? cs) true
+      (do 
+        (doall (map async/close! cs))
+        nil)))

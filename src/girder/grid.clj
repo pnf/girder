@@ -1,21 +1,18 @@
 (ns girder.grid
-  (:use girder.redis
+  (:use girder.back-end
+        girder.redis
         girder.async)
   (:require  digest
              [clj-time.core :as ct]
              [clj-time.coerce :as co]
+             [taoensso.timbre :as timbre]
              [ clojure.core.async :as async 
               :refer [<! >! <!! >!! timeout chan alt!! go close!]]))
+(timbre/refer-timbre)
 
-(def back-end redis-local-default)
-(def kvl (kv-listener back-end "STATE"))
+(def back-end (local-back-end))
+(def kvl (kv-listener back-end))
 
-
-(defn req-queue-key [nodeid] (str "req-queue-" nodeid))
-(defn req-set-key   [nodeid] (str "req-set-" nodeid))
-(defn vols-key [nodeid] (str "vol-queue-" nodeid))
-(defn mems-key [nodeid] (str "mem-set-" nodeid))
-(defn state-key [reqid] (str "status-" reqid))
 
 (defn register-member [nodeid memberid]
   (let [node-mems-key (mems-key nodeid)]
@@ -27,10 +24,7 @@
 
 (defn enqueue [nodeid reqid]
   (enqueue-listen back-end kvl
-                  (req-queue-key nodeid)
-                  reqid
-                  reqid
-                  (state-key reqid)
+                  nodeid reqid
                   nil?
                   #(= "DONE" %)))
 
@@ -39,7 +33,7 @@
   [nodeid reqids process-fn]
   (let [results   (async/map vector (map  #(enqueue nodeid %) reqids))
         reqs      (clpop back-end (req-queue-key nodeid))
-        out       (chan)]
+        out       (lchan (str "request-stuff " reqids))]
     (async/go-loop []
       (let [[c v] (async/alts! [results reqs])]
         (if (= c results)
@@ -49,26 +43,27 @@
     out))
 
 (defn unclaimed [reqid] 
-  (let [status (get-scalar (state-key reqid))]
-    (some-> status nil? (= "NEW"))))
+  (let [status (get-state back-end reqid)]
+    (or (nil? status) (= "NEW" status))))
 
 (defn launch-distributor
   "Listen for requests and volunteers.
    When we find one of each, add request to volunteer's queue."
   [nodeid]
-  (let [ctl        (chan)
+  (let [ctl        (lchan (str  "launch-distributor " nodeid))
         reqs       (async/filter< unclaimed
                                   (clpop back-end (req-queue-key nodeid)))
         vols       (clpop back-end (vols-key nodeid))
-        req+vols   (async/map vector reqs vols)]
+        reqs+vols   (async/map vector [reqs vols])]
     (async/go-loop []
-      (let [[reqid volid] (async/alts! [req+vols ctl])
-            vq            (vols-key volid)]
-        (if (and reqid volid) ; one or both will be null on cancellation
-          (do 
-            (rpush back-end vq reqid)
-            (recur))
-          (close-all! [reqs vols req+vols ctl]))))
+      (let [[v c] (async/alts! [reqs+vols ctl])]
+        (debug nodeid "got" v c)
+        (when (and (still-open? reqs vols reqs+vols ctl) v (= c reqs+vols))
+          (let [[reqid volid] v
+                work-queue    (req-queue-key volid)]
+            (debug nodeid "pushing" reqid "to" work-queue "for" volid)
+            (rpush back-end work-queue reqid)
+            (recur)))))
     ctl))
 
 ;; TODO (maybe) use sets on back-end
@@ -78,14 +73,14 @@
   (let [our-queue          (req-queue-key nodeid)
         member-nodeids     (get-members back-end (mems-key nodeid))
         member-queues      (map req-queue-key member-nodeids)
-        ctl                (chan)]
+        ctl                (lchan ("launch-helper " nodeid))]
     (async/go-loop []
       (let [in-our-queue     (set (lall back-end our-queue))
             in-member-queues (apply clojure.set/union 
                                     (map #(set (lall back-end %)) member-queues))
             additions   (clojure.set/difference in-member-queues in-our-queue)]
         (apply rpush back-end our-queue additions))
-      (when-not (closed? ctl)
+      (when (still-open? ctl)
         (<! (timeout cycle-msec))
         (recur)))
     ctl))
@@ -95,15 +90,18 @@
   (register-member poolid nodeid)
   (let [our-queue (clpop back-end (req-queue-key nodeid))
         volunteer (crpush back-end (vols-key poolid))
-        reqs      (clpop back-end)
-        ctl       (chan)]
+        ctl       (lchan (str "launch-worker " nodeid))]
     (async/go-loop []
+      (debug "worker" nodeid "pushing onto" volunteer "queue for" poolid)
       (>! volunteer nodeid)
       (let [req (<! our-queue)]
-        (process-fn req))
-      (if (closed? ctl)
-        (unregister-member poolid nodeid)
-        (recur)))))
+        (debug "Worker" nodeid "received" req)
+        (if (and req (still-open? our-queue volunteer ctl))
+          (do (process-fn req)
+              (recur))
+          (do (debug "Closing" nodeid)
+              (unregister-member poolid nodeid)))))
+    ctl))
 
 
 ;; (def topology ["commons" 0
@@ -134,8 +132,8 @@
 ;;         c2 (chan)]
 ;;     (async/tap m c1)
 ;;     (async/tap m c2)
-;;     (go (println "c1" (<! c1)))
-;;     (go (println "c2" (<! c2)))
+;;     (go (debug "c1" (<! c1)))
+;;     (go (debug "c2" (<! c2)))
 ;;     ;(go (>! c "yipee"))
 ;;     (close! c)
 ;;     ))
