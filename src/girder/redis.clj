@@ -14,12 +14,19 @@
 
   KV-Listener-Manager
 
-  (kv-listen [kvl k]
+  #_(kv-listen [kvl k]
     (let [c   (lchan (pr-str kvl k))
           pu  (:publisher kvl)]
       (debug "Subscribing on" pu "for" k)
       (async/sub pu k c)
       (async/map second [c])))
+
+  (kv-listen [kvl k]
+    (let [{a :publisher
+           l :listener} kvl
+           c             (lchan (pr-str kvl k))]
+      (swap! a (fn [cmap] (assoc-in cmap [k c] 1)))
+      c))
 
   (kv-publish [kvl k v]
     (let [{redis :redis
@@ -40,6 +47,7 @@
   (vols-key [redis nodeid] (str "vol-queue-" nodeid))
   (mems-key [redis nodeid] (str "mem-set-" nodeid))
   (state-key [redis reqid] (str "status-" reqid))
+  (val-key [redis reqid] (str "value-" reqid))
 
   (crpush [redis key]
     (let [in (lchan (str "crpush-" key))]
@@ -72,22 +80,67 @@
       out))  
 
   
-  ;; Listen on master topic for [k v]
+  ;; Experimental version using core.async pub/sub.
+  ;; I'm worried about the circumstances where the source channel might block, and
+  ;; I would also like the subscribing channels to be closed immediately.
+  #_(kv-listener [redis topic]
+      (let [source                  (chan)
+            publisher               (async/pub source first)
+            kv-message-listener (fn [[etype topic kv :as msg]]
+                                  (debug "kv-message-listener" (pr-str msg))
+                                  (when (and (= etype "message") (vector? kv))
+                                    (do (debug "kv-message-listener publishing" kv)
+                                        (go (>! source kv)))))
+            redis-listener      (car/with-new-pubsub-listener
+                                  (:spec redis)
+                                  {topic kv-message-listener}
+                                  (car/subscribe topic))]
+        (->Redis-KV-Listener redis topic publisher redis-listener)))
+
+  ;; In this version, the publisher field is actually a map atom containing
+  ;;     {reqid1    {chana 1
+  ;;                 chanb 1}
+  ;;      reqid2    {chanc 1
+  ;;                {chand 1}}
+  ;; The callback we register with redis/carmine receives values like
+  ;;             [etype topic [reqid value]]
+  ;; If etype is "message", then atomically notify all the subscribed channels and close them,
+  ;; then remove from the map.
+  #_(kv-listener [redis topic]
+    (letfn [(kv-message-cb [a [etype topic val :as msg]]
+              (debug "kv-message-cb" (pr-str msg))
+              (when (and (= etype "message") (vector? val))
+                (let [[k v] val]
+                  (debug "kv-message-cb" (pr-str k) (pr-str v))
+                  (swap! a (fn [cmap]
+                             ;; Notify all channels subscribed to this topic and close them.
+                             (doseq [c (keys (get cmap k))] (go (>! c v) (close! c)))
+                             (dissoc cmap k))))))]
+      (let [publisher          (atom {}) ;; { key {c1 r1, c2 r2}}
+            redis-listener     (car/with-new-pubsub-listener
+                                 (:spec redis)
+                                 {topic (partial kv-message-cb publisher)}
+                                 (car/subscribe topic))]
+        (->Redis-KV-Listener redis topic publisher redis-listener))))
 
 
-  (kv-listener [redis topic]
-    (let [source                  (chan)
-          publisher               (async/pub source first)
-          kv-message-listener (fn [[etype topic kv :as msg]]
-                                (debug "kv-message-listener" (pr-str msg))
-                                (when (and (= etype "message") (vector? kv))
-                                  (do (debug "kv-message-listener publishing" kv)
-                                      (go (>! source kv)))))
-          redis-listener      (car/with-new-pubsub-listener
-                                (:spec redis)
-                                {topic kv-message-listener}
-                                (car/subscribe topic))]
-      (->Redis-KV-Listener redis topic publisher redis-listener)))
+
+(kv-listener [redis topic]
+  (let [publisher          (atom {}) ;; { key {c1 r1, c2 r2}}
+        kv-message-cb      (fn [a [etype _ val :as msg]]
+                             (debug "kv-message-cb" (pr-str msg))
+                             (when (and (= etype "message") (vector? val))
+                               (let [[k v] val]
+                                 (debug "kv-message-cb" (pr-str k) (pr-str v))
+                                 (swap! a (fn [cmap]
+                                            ;; Notify all channels subscribed to this topic and close them.
+                                            (doseq [c (keys (get cmap k))] (go (>! c v) (close! c)))
+                                            (dissoc cmap k))))))
+        redis-listener     (car/with-new-pubsub-listener
+                                 (:spec redis)
+                                 {topic (partial kv-message-cb publisher)}
+                                 (car/subscribe topic))]
+        (->Redis-KV-Listener redis topic publisher redis-listener)))
 
   (kv-listener [redis] (kv-listener redis "CALCS"))
 
@@ -116,13 +169,11 @@
      enqueue-pred done-pred]
     (debug "enqueue/listen" redis kvl nodeid reqid enqueue-pred done-pred)
     (let [qkey (req-queue-key redis nodeid)
-          rkey reqid
-          pkey reqid
           vkey (state-key redis reqid)
           [_ v] (wcar redis
                       (car/watch vkey)
                       (car/get vkey))
-          c     (kv-listen kvl pkey)]
+          c     (kv-listen kvl reqid)]
       (cond
        (done-pred v)  (do 
                         (debug "enqeue-listen" reqid "already done")
@@ -131,7 +182,7 @@
                           (debug "enqueue-listen" reqid "sending" v)
                           (wcar redis
                                 (car/multi)
-                                (car/rpush qkey rkey)
+                                (car/rpush qkey reqid)
                                 (car/exec)))
        :else           (debug "enqeue-listen" reqid "doing nothing"))
       (wcar redis (car/unwatch))
