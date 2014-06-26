@@ -10,16 +10,16 @@
               :refer [<! >! <!! >!! timeout chan alt!! go close!]]))
 (timbre/refer-timbre)
 
-(defrecord Redis-KV-Listener [redis topic state listener]
+(defrecord Redis-KV-Listener [redis topic publisher listener]
 
   KV-Listener-Manager
 
   (kv-listen [kvl k]
-    (let [{a :state
-           l :listener} kvl
-           c             (lchan (pr-str kvl k))]
-      (swap! a (fn [cmap] (assoc-in cmap [k c] 1)))
-      c))
+    (let [c   (lchan (pr-str kvl k))
+          pu  (:publisher kvl)]
+      (debug "Subscribing on" pu "for" k)
+      (async/sub pu k c)
+      (async/map second [c])))
 
   (kv-publish [kvl k v]
     (let [{redis :redis
@@ -35,7 +35,6 @@
 
   Girder-Backend
 
-
   (req-queue-key [redis nodeid] (str "req-queue-" nodeid))
   (req-set-key   [redis nodeid] (str "req-set-" nodeid))
   (vols-key [redis nodeid] (str "vol-queue-" nodeid))
@@ -45,7 +44,7 @@
   (crpush [redis key]
     (let [in (lchan (str "crpush-" key))]
       (async/go-loop []
-        (when-let [val (<! in)]                  ; otherwise it's closed
+        (when-let [val (<! in)]         ; otherwise it's closed
           (wcar redis (car/rpush key val))
           (recur)))
       in))
@@ -54,9 +53,9 @@
     (wcar redis (car/rpush key val)))
 
   (rpush [redis key val & vals]
-     (wcar redis (apply car/rpush key val vals)))
+    (wcar redis (apply car/rpush key val vals)))
   (rpush [redis key val]
-     (wcar redis (car/rpush key val)))
+    (wcar redis (car/rpush key val)))
 
   (clpop [redis key]
     (let [out   (lchan (str "clpop-" key))]
@@ -73,23 +72,22 @@
       out))  
 
   
-  ;; Listen on topic for [x y] messages and publish
+  ;; Listen on master topic for [k v]
+
+
   (kv-listener [redis topic]
-    (letfn [(kv-message-listener [a [etype topic val :as msg]]
-              (debug "kv-message-listener" (pr-str msg))
-              (when (and (= etype "message") (vector? val))
-                (let [[k v] val]
-                  (debug "kv-message-listener" (pr-str k) (pr-str v))
-                  (swap! a (fn [cmap]
-                             ;; Notify all channels subscribed to this topic
-                             (doseq [c (keys (get cmap k))] (go (>! c v) (close! c)))
-                             (dissoc cmap k))))))]
-      (let [a    (atom {})   ;; { key {c1 r1, c2 r2}} -- rs currently ignored
-            l    (car/with-new-pubsub-listener
-                   (:spec redis)
-                   {topic (partial kv-message-listener a)}
-                   (car/subscribe topic))]
-        (->Redis-KV-Listener redis topic a l))))
+    (let [source                  (chan)
+          publisher               (async/pub source first)
+          kv-message-listener (fn [[etype topic kv :as msg]]
+                                (debug "kv-message-listener" (pr-str msg))
+                                (when (and (= etype "message") (vector? kv))
+                                  (do (debug "kv-message-listener publishing" kv)
+                                      (go (>! source kv)))))
+          redis-listener      (car/with-new-pubsub-listener
+                                (:spec redis)
+                                {topic kv-message-listener}
+                                (car/subscribe topic))]
+      (->Redis-KV-Listener redis topic publisher redis-listener)))
 
   (kv-listener [redis] (kv-listener redis "CALCS"))
 
@@ -103,7 +101,7 @@
   (watch [redis key]
     (wcar redis (car/watch key)))
 
-  ( unwatch [redis key]
+  (unwatch [redis key]
     (wcar redis (car/unwatch key)))
 
   (sadd [redis key val]
@@ -136,7 +134,7 @@
                                 (car/rpush qkey rkey)
                                 (car/exec)))
        :else           (debug "enqeue-listen" reqid "doing nothing"))
-       (wcar redis (car/unwatch))
+      (wcar redis (car/unwatch))
       c)))
 
 
