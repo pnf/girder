@@ -1,8 +1,8 @@
 (ns girder.grid
   (:use girder.back-end
-        girder.redis
         girder.async)
   (:require  digest
+             girder.redis
              [clj-time.core :as ct]
              [clj-time.coerce :as co]
              [taoensso.timbre :as timbre]
@@ -10,35 +10,64 @@
               :refer [<! >! <!! >!! timeout chan alt!! go close!]]))
 (timbre/refer-timbre)
 
-(def back-end (local-back-end))
-(def kvl (kv-listener back-end))
+;;(timbre/set-level! :debug)
 
+(def kvl)
+(def back-end)
+
+;(girder.redis/init-local!)
 
 (defn register-member [nodeid memberid]
-  (let [node-mems-key (mems-key nodeid)]
+  (let [node-mems-key (mems-key back-end nodeid)]
     (sadd back-end node-mems-key memberid)))
 
 (defn unregister-member [nodeid memberid]
-  (let [node-mems-key (mems-key nodeid)]
+  (let [node-mems-key (mems-key back-end nodeid)]
     (srem back-end node-mems-key memberid)))
 
-(defn enqueue [nodeid reqid]
-  (enqueue-listen back-end kvl
-                  nodeid reqid
-                  nil?
-                  #(= "DONE" %)))
+(defn fname
+  "Extract the qualified name of a clojure function as a string."
+  [f]
+  (-> (str f)
+      (clojure.string/replace-first "$" "/")
+      (clojure.string/replace #"@\w+$" "")))
+
+(defn req->reqid [[f & args]]
+  (pr-str (concat [(fname f)] args)))
+
+(defn reqid->req [reqid]
+  (let [[f & args]  (read-string reqid)
+        f           (resolve (symbol f))]
+    (apply vector f args)))
+
+(defn- process-req [reqid]
+  (debug "process-req" reqid)
+  (let [res (try 
+                (let [[f & args]  (reqid->req reqid)]
+                  (apply f args))
+                (catch Exception e (-> e .getStackTrace .toString)))
+        res (pr-str res)]
+    (kv-publish kvl reqid res)
+    (debug "process-req published" res "to" reqid )))
+
+(defn enqueue [nodeid req]
+  (async/map #(do (debug "Yowsa" %) (read-string %))
+             [(enqueue-listen back-end kvl
+                               nodeid (req->reqid req)
+                               nil?
+                               #(= "DONE" %))]))
 
 (defn request-stuff
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
-  [nodeid reqids process-fn]
-  (let [results   (async/map vector (map  #(enqueue nodeid %) reqids))
-        reqs      (clpop back-end (req-queue-key nodeid))
-        out       (lchan (str "request-stuff " reqids))]
+  [nodeid reqs]
+  (let [results   (async/map vector (map  #(enqueue nodeid %) reqs))
+        reqs      (clpop back-end (req-queue-key back-end nodeid))
+        out       (lchan (str "request-stuff " reqs))]
     (async/go-loop []
       (let [[c v] (async/alts! [results reqs])]
         (if (= c results)
           (>! out v)
-          (do (process-fn v)
+          (do (process-req v)
               (recur)))))
     out))
 
@@ -52,27 +81,29 @@
   [nodeid]
   (let [ctl        (lchan (str  "launch-distributor " nodeid))
         reqs       (async/filter< unclaimed
-                                  (clpop back-end (req-queue-key nodeid)))
-        vols       (clpop back-end (vols-key nodeid))
+                                  (clpop back-end (req-queue-key back-end nodeid)))
+        vols       (clpop back-end (vols-key back-end nodeid))
         reqs+vols   (async/map vector [reqs vols])]
     (async/go-loop []
       (let [[v c] (async/alts! [reqs+vols ctl])]
         (debug nodeid "got" v c)
         (when (and (still-open? reqs vols reqs+vols ctl) v (= c reqs+vols))
           (let [[reqid volid] v
-                work-queue    (req-queue-key volid)]
+                work-queue    (req-queue-key back-end volid)]
             (debug nodeid "pushing" reqid "to" work-queue "for" volid)
             (rpush back-end work-queue reqid)
             (recur)))))
     ctl))
 
-;; TODO (maybe) use sets on back-end
+
+
+
 (defn launch-helper
   "Copy reqs from our team."
   [nodeid cycle-msec]
-  (let [our-queue          (req-queue-key nodeid)
-        member-nodeids     (get-members back-end (mems-key nodeid))
-        member-queues      (map req-queue-key member-nodeids)
+  (let [our-queue          (req-queue-key back-end nodeid)
+        member-nodeids     (get-members back-end (mems-key back-end nodeid))
+        member-queues      (map (partial req-queue-key back-end) member-nodeids)
         ctl                (lchan ("launch-helper " nodeid))]
     (async/go-loop []
       (let [in-our-queue     (set (lall back-end our-queue))
@@ -85,19 +116,21 @@
         (recur)))
     ctl))
 
+
 (defn launch-worker
-  [nodeid poolid process-fn]
+  [nodeid poolid]
   (register-member poolid nodeid)
-  (let [our-queue (clpop back-end (req-queue-key nodeid))
-        volunteer (crpush back-end (vols-key poolid))
+  (let [our-queue (async/filter< unclaimed
+                                 (clpop back-end (req-queue-key back-end nodeid)))
+        volunteer (crpush back-end (vols-key back-end poolid))
         ctl       (lchan (str "launch-worker " nodeid))]
     (async/go-loop []
-      (debug "worker" nodeid "pushing onto" volunteer "queue for" poolid)
+      (debug "worker" nodeid "volunteering onto" volunteer "queue for" poolid)
       (>! volunteer nodeid)
-      (let [req (<! our-queue)]
+      (let [req  (<! our-queue)]
         (debug "Worker" nodeid "received" req)
         (if (and req (still-open? our-queue volunteer ctl))
-          (do (process-fn req)
+          (do (process-req req)
               (recur))
           (do (debug "Closing" nodeid)
               (unregister-member poolid nodeid)))))

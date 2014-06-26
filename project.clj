@@ -20,6 +20,7 @@
 
   :jvm-opts  ^:replace ["-Xmx1g" "-server" ] 
   :source-paths ["src"]
+  :test-paths ["test"]
 
 
   :aot :all
