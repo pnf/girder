@@ -51,7 +51,7 @@
     (debug "process-req published" res "to" reqid )))
 
 (defn enqueue [nodeid req]
-  (async/map #(do (debug "Yowsa" %) (read-string %))
+  (async/map #(do (trace "enqueue channel" %) (read-string %))
              [(enqueue-listen back-end kvl
                                nodeid (req->reqid req)
                                nil?
