@@ -10,6 +10,13 @@
               :refer [<! >! <!! >!! timeout chan alt!! go close!]]))
 (timbre/refer-timbre)
 
+
+(defn queue-key [nodeid queue-type] (str (name queue-type) "-queue-" nodeid))
+(defn set-key [nodeid set-type] (str (name set-type) "-set-" nodeid))
+(defn vols-key [nodeid] (str "vol-queue-" nodeid))
+
+(defn state-key [reqid] (str "status-" reqid))
+
 (defrecord Redis-KV-Listener [redis topic publisher listener]
 
   KV-Listener-Manager
@@ -31,7 +38,8 @@
   (kv-publish [kvl k v]
     (let [{redis :redis
            topic :topic} kvl]
-      (wcar redis (car/publish topic [k v]))))
+      (wcar redis 
+            (car/publish topic [k v]))))
 
   (kv-close [kvl]
     (let [{listener :listener
@@ -42,31 +50,23 @@
 
   Girder-Backend
 
-  (req-queue-key [redis nodeid] (str "req-queue-" nodeid))
-  (req-set-key   [redis nodeid] (str "req-set-" nodeid))
-  (vols-key [redis nodeid] (str "vol-queue-" nodeid))
-  (mems-key [redis nodeid] (str "mem-set-" nodeid))
-  (state-key [redis reqid] (str "status-" reqid))
-  (val-key [redis reqid] (str "value-" reqid))
-
-  (crpush [redis key]
-    (let [in (lchan (str "crpush-" key))]
+  (crpush [redis key queue-type]
+    (let [key (queue-key key queue-type)
+          in (lchan (str "crpush-" key))]
       (async/go-loop []
         (when-let [val (<! in)]         ; otherwise it's closed
           (wcar redis (car/rpush key val))
           (recur)))
       in))
 
-  (push [redis key val]
-    (wcar redis (car/rpush key val)))
+  (rpush [redis key queue-type val & vals]
+    (wcar redis (apply car/rpush (queue-key key queue-type) val vals)))
+  (rpush [redis key queue-type val]
+    (wcar redis (car/rpush (queue-key key queue-type) val)))
 
-  (rpush [redis key val & vals]
-    (wcar redis (apply car/rpush key val vals)))
-  (rpush [redis key val]
-    (wcar redis (car/rpush key val)))
-
-  (clpop [redis key]
-    (let [out   (lchan (str "clpop-" key))]
+  (clpop [redis key queue-type]
+    (let [key   (queue-key key queue-type)
+          out   (lchan (str "clpop-" key))]
       (async/go-loop []
         (debug "Calling blpop" key)
         (let [[qkey val] (wcar redis (car/blpop key 60))]
@@ -108,12 +108,13 @@
   ;; then remove from the map.
   #_(kv-listener [redis topic]
     (letfn [(kv-message-cb [a [etype topic val :as msg]]
-              (debug "kv-message-cb" (pr-str msg))
+              (debug "kv-message-cb message" (pr-str msg))
               (when (and (= etype "message") (vector? val))
                 (let [[k v] val]
-                  (debug "kv-message-cb" (pr-str k) (pr-str v))
+                  (debug "kv-message-cb key=" (pr-str k) "value=" (pr-str v))
                   (swap! a (fn [cmap]
                              ;; Notify all channels subscribed to this topic and close them.
+                             (debug "kv-message-cb publishing v to" (keys (get cmap k)))
                              (doseq [c (keys (get cmap k))] (go (>! c v) (close! c)))
                              (dissoc cmap k))))))]
       (let [publisher          (atom {}) ;; { key {c1 r1, c2 r2}}
@@ -128,12 +129,13 @@
 (kv-listener [redis topic]
   (let [publisher          (atom {}) ;; { key {c1 r1, c2 r2}}
         kv-message-cb      (fn [a [etype _ val :as msg]]
-                             (debug "kv-message-cb" (pr-str msg))
+                             (debug "kv-message-cb message" (pr-str msg))
                              (when (and (= etype "message") (vector? val))
                                (let [[k v] val]
-                                 (debug "kv-message-cb" (pr-str k) (pr-str v))
+                                 (debug "kv-message-cb k=" (pr-str k) "v=" (pr-str v))
                                  (swap! a (fn [cmap]
                                             ;; Notify all channels subscribed to this topic and close them.
+                                            (debug "kv-message-cb publishing" v "to" (keys (get cmap k)))
                                             (doseq [c (keys (get cmap k))] (go (>! c v) (close! c)))
                                             (dissoc cmap k))))))
         redis-listener     (car/with-new-pubsub-listener
@@ -144,32 +146,27 @@
 
   (kv-listener [redis] (kv-listener redis "CALCS"))
 
-  (get-members [redis key]
-    (wcar redis (car/smembers key)))
+  (get-state [redis key] (wcar redis (car/get (state-key key))))
+  (set-state [redis key val] (wcar redis (car/getset key val)))
 
-  (get-state [redis key] (wcar redis (car/get (state-key redis key))))
+  (qall [redis key queue-type] (wcar redis (car/lrange (queue-key key queue-type) 0 -1)))
 
-  (lall [redis key] (wcar redis (car/lrange key 0 -1)))
+  (add-member [redis key set-type val]
+    (wcar redis (car/sadd (set-key key set-type) val)))
 
-  (watch [redis key]
-    (wcar redis (car/watch key)))
+  (remove-member [redis key set-type val]
+    (wcar redis (car/srem (set-key key set-type) val)))
 
-  (unwatch [redis key]
-    (wcar redis (car/unwatch key)))
-
-  (sadd [redis key val]
-    (wcar redis (car/sadd key val)))
-
-  (srem [redis key val]
-    (wcar redis (car/srem key val)))
+  (get-members [redis key set-type]
+    (wcar redis (car/smembers (set-key key set-type))))
 
   (enqueue-listen
     [redis kvl
      nodeid reqid
      enqueue-pred done-pred]
     (debug "enqueue/listen" redis kvl nodeid reqid enqueue-pred done-pred)
-    (let [qkey (req-queue-key redis nodeid)
-          vkey (state-key redis reqid)
+    (let [qkey (queue-key nodeid :requests)
+          vkey (state-key reqid)
           [_ v] (wcar redis
                       (car/watch vkey)
                       (car/get vkey))
