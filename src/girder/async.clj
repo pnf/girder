@@ -24,6 +24,8 @@
   ([name] (async/chan (logging-buffer name)))
   ([name buf] (async/chan (logging-buffer name buf))))
 
+(defn closed? [c] (pimpl/closed? c))
+
 (defn still-open? [& cs]
   (if (not-any? pimpl/closed? cs) true
       (do 
