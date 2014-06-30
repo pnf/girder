@@ -23,7 +23,7 @@
   :test-paths ["test"]
 
 
-  :aot :all
+  :aot [girder.core  girder.gridrunner]
   :uberjar-name "girder.jar"
-  :main girder.core
+
 )

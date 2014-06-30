@@ -1,9 +1,7 @@
 (ns girder.core
   (:require [clojure.tools.cli :refer [parse-opts]]
             [girder.bitemp :as bt])
-  (:gen-class)
-
-)
+  (:gen-class))
 
 
 (def commands #{"recreate" "insert-lots" "query-lots"})

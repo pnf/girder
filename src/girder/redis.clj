@@ -190,3 +190,8 @@
   '(do
      (def girder.grid/back-end (girder.redis/->Redis-Backend  {:pool {} :spec {:host "localhost" :port 6379}}))
      (def girder.grid/kvl (kv-listener back-end "CALCS"))))
+
+(defmacro init! [host port]
+'(do
+     (def girder.grid/back-end (girder.redis/->Redis-Backend  {:pool {} :spec {:host host :port port}}))
+     (def girder.grid/kvl (kv-listener back-end "CALCS"))))
