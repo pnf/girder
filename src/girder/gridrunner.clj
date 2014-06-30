@@ -1,7 +1,8 @@
 (ns girder.gridrunner
   (:require [clojure.tools.cli :refer [parse-opts]]
-            girder.redis)
+            [clojure.core.async :as async])
   (:use girder.grid)
+  (:require girder.redis)
   (:gen-class))
 
 (defmacro timeit
@@ -17,7 +18,7 @@ appropriate, and the elapsed :time in msec."
 
 (defn bogosity [nsec jobnum]
   (Thread/sleep (* nsec 1000))
-  (str jobnum ":" nsec))
+  (str "Bogosity:" jobnum ":" nsec))
 
 
 (def cli-options
@@ -25,16 +26,32 @@ appropriate, and the elapsed :time in msec."
    [nil "--distributor DIST" "Launch a distributor"]
    [nil "--host HOST" "Redis host" :default "localhost"]
    [nil "--port PORT" "Redis port" :default 6379 :parse-fn #(Integer/parseInt %)]
-   [nil "--jobsecs SECS" "Amount of time for the job to take" :default 1]
-   [nil "--jobs N" :default 0]
+   [nil "--jobsecs SECS" "Amount of time for the job to take" :parse-fn #(Integer/parseInt %) :default 1]
+   [nil "--pool POOLID" "Pool ID" :default nil]
+   [nil "--jobs N" :default 1]
+   [nil "--timeout SECS" "Time to wait." :parse-fn #(Integer/parseInt %) :default 10]
    ["-o" "--opts OPTS" "EDN string" :default nil]
    [nil "--repl" "Set when running in REPL, so exit isn't called"]])
-
 
 (defn -main [& args]
   (let [parsed  (parse-opts args cli-options)
         errs (:errors parsed)
         opts (:options parsed)
         opts (merge (dissoc opts :opts) (:opts opts))
-        {:keys [worker distributor port jobsecs jobs]} opts]
-    (println worker distributor port jobsecs jobs)))
+        {:keys [pool worker distributor host port jobsecs jobs timeout]} opts]
+    (girder.redis/init! port host)
+    (timeit 
+     (when distributor
+       (let [ds (clojure.string/split distributor #",")]
+         (doseq [d ds]
+           (launch-distributor d pool))))
+     (when worker
+       (let [ws (clojure.string/split worker #",")]
+         (doseq [w ws]
+           (launch-worker w pool))))
+     (when (and pool (pos? jobs))
+       (let [c (async/map vector (map #(enqueue pool [bogosity jobsecs %]) (range jobs)))
+             t (async/timeout (* 1000 timeout))]
+         (let [[v ch] (async/alts!! [c t])]
+           (or v "timeout")))))))
+

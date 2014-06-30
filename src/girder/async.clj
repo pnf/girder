@@ -26,8 +26,6 @@
 
 (defn closed? [c] (pimpl/closed? c))
 
-(defn still-open? [& cs]
-  (if (not-any? pimpl/closed? cs) true
-      (do 
-        (doall (map async/close! cs))
-        nil)))
+(defn still-open? [& cs] (not-any? pimpl/closed? cs))
+
+(defn close-all! [& cs] (doall (map async/close! cs)))
