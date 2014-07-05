@@ -1,7 +1,7 @@
 (ns girder.redis
 "Implementation of KV-Listener-Manager and Girder-Backend using Redis."
   (:use girder.async girder.back-end)
-   (:require [taoensso.carmine :as car :refer (wcar)]
+  (:require [taoensso.carmine :as car :refer (wcar)]
              [taoensso.timbre :as timbre]
              digest
              [clj-time.core :as ct]
@@ -14,7 +14,7 @@
 (defn queue-key [nodeid queue-type] (str (name queue-type) "-queue-" nodeid))
 (defn set-key [nodeid set-type] (str (name set-type) "-set-" nodeid))
 (defn vols-key [nodeid] (str "vol-queue-" nodeid))
-(defn state-key [reqid] (str "status-" reqid))
+(defn val-key [reqid val-type ] (str (name val-type)  "-val-" reqid))
 
 (defrecord Redis-KV-Listener [topic publisher listener])
 
@@ -32,10 +32,28 @@
           (recur)))
       in))
 
-  (rpush [this key queue-type val & vals]
-    (wcar (:redis this) (apply car/rpush (queue-key key queue-type) val vals)))
+  (rpush-many [this key queue-type vals]
+    (wcar (:redis this) (apply car/rpush (queue-key key queue-type) vals)))
+
   (rpush [this key queue-type val]
     (wcar (:redis this) (car/rpush (queue-key key queue-type) val)))
+
+  (rpush-and-set [this
+                  qkey queue-type qval
+                  vkey val-type vval]
+    (let [qkey (queue-key qkey queue-type)
+          vkey (val-key   vkey val-type)]
+      (if (nil? vval)
+        (wcar (:redis this)
+              (car/multi)
+              (car/del vkey)
+              (car/rpush qkey qval)
+              (car/exec))
+        (wcar (:redis this)
+              (car/multi)
+              (car/set vkey vval)
+              (car/rpush qkey qval)
+              (car/exec)))))
 
   (clpop [this key queue-type]
     (let [key   (queue-key key queue-type)
@@ -49,11 +67,17 @@
             (when val 
               (debug "Pushing" val "onto" out)
               (>! out val))
-            (recur))))
+           (recur))))
       out))
-  
-  (get-state [this key] (wcar (:redis this) (car/get (state-key key))))
-  (set-state [this key val] (wcar (:redis this) (car/getset key val)))
+
+  (get-val [this key val-type] (wcar (:redis this) (car/get (val-key key val-type))))
+  (set-val [this key val-type val] 
+    (let [k (val-key key val-type)]
+      (if (nil? val)
+        (-> (wcar (:redis this) (car/multi) (car/get k) (car/del k) (car/exec))
+            (nth 3)
+            first)
+        (wcar (:redis this) (car/getset k val)))))
 
   (qall [this key queue-type] (wcar (:redis this) (car/lrange (queue-key key queue-type) 0 -1)))
 
@@ -95,30 +119,32 @@
   (enqueue-listen
     [this
      nodeid reqid
-     enqueue-pred done-pred]
-    (debug "enqueue/listen" this nodeid reqid enqueue-pred done-pred)
+     queue-type val-type
+     enqueue-pred done-pred done-extract]
+    (trace "enqueue/listen" this nodeid reqid enqueue-pred done-pred)
     (let [redis (:redis this)
-          qkey (queue-key nodeid :requests)
-          vkey (state-key reqid)
+          qkey (queue-key nodeid queue-type)
+          vkey (val-key reqid val-type)
           [_ v] (wcar redis
                       (car/watch vkey)
                       (car/get vkey))
           c     (kv-listen this reqid)]
       (cond
-       (done-pred v)  (do 
-                        (debug "enqeue-listen" reqid "already done")
+       
+       (done-pred v)  (let [v (done-extract v)]
+                        (trace "enqeue-listen" reqid "already done, publishing" v)
                         (go (>! c v) (close! c)))
        (enqueue-pred v) (do 
-                          (debug "enqueue-listen" reqid "sending" v)
+                          (trace "enqueue-listen enqueueing" reqid)
                           (wcar redis
                                 (car/multi)
                                 (car/rpush qkey reqid)
                                 (car/exec)))
-       :else           (debug "enqeue-listen" reqid "doing nothing"))
+       :else           (trace "enqeue-listen" reqid "state already" v))
       (wcar redis (car/unwatch))
       c))
 
-
+  (clean-all [this] (wcar (:redis this) (car/flushdb)))
 
 )
 
@@ -136,13 +162,13 @@
 (defn- kv-listener [redis topic]
   (let [publisher          (atom {}) ;; { key {c1 r1, c2 r2}}
         kv-message-cb      (fn [a [etype _ val :as msg]]
-                             (debug "kv-message-cb message" (pr-str msg))
+                             (trace "kv-message-cb message" (pr-str msg))
                              (when (and (= etype "message") (vector? val))
                                (let [[k v] val]
-                                 (debug "kv-message-cb k=" (pr-str k) "v=" (pr-str v))
+                                 (trace "kv-message-cb k=" (pr-str k) "v=" (pr-str v))
                                  (swap! a (fn [cmap]
                                             ;; Notify all channels subscribed to this topic and close them.
-                                            (debug "kv-message-cb publishing" v "to" (keys (get cmap k)))
+                                            (trace "kv-message-cb publishing" v "to" (keys (get cmap k)))
                                             (doseq [c (keys (get cmap k))] (go (>! c v) (close! c)))
                                             (dissoc cmap k))))))
         redis-listener     (car/with-new-pubsub-listener
@@ -155,6 +181,5 @@
   ([host port]
      (let [redis   {:pool {} :spec {:host host :port port}}
            kvl     (kv-listener redis "CALCS")]
-       (wcar redis (car/flushdb))
        (reset! girder.grid/back-end (->Redis-Backend redis kvl))))
   ([] (init! "localhost" 6379)))
