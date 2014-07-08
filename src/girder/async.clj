@@ -38,13 +38,23 @@
 
 (defn lchan [name & [buf]]
   (if-not (timbre/level-sufficient? :trace nil) (chan buf)
-          (let [name (if (fn?) #(name) name)
+          (let [name (if (fn? name) (name) name)
                 c    (async/map> #(do (trace "Channel" name "receiving" %) %)
                                  (async/map< #(do (trace "Channel" name "delivering" %) %) (chan buf)))]
             (trace "Channel" name "created:" c)
             (swap! lchans #(assoc % c name))
             c)))
 
+(defn log-chan
+  "Add logging to pre-existing channel"
+  [name c]
+  (if-not (timbre/level-sufficient? :trace nil) c
+          (let [name (if (fn? name) (name) name)
+                c2 (async/map> #(do (trace "Channel" name "receiving" %) %)
+                              (async/map< #(do (trace "Channel" name "delivering" %) %) c))]
+            (trace "Channel" name "created:" c2 "logging" c)
+            (swap! lchans #(assoc % c2 name))
+            c2)))
 
 (defn fn->chan
   "Apply function to arguments, sending the result to a channel, which is returned." 
@@ -65,6 +75,46 @@ If timbre debug level is :trace, then this channel will be instrumented."
           (go (>! c (apply f args))
               (close! c))
           c)))
+
+(defmacro c-apply
+  "Takes a function and arguments, returning a channel, which will receive
+{:value <result of applying the function to the arguments>} or {:error <stack trace>}."
+  [f & args]
+  `(let [c# (lchan #(str "( "~f ~@args ")"))]
+     (go (>! c# (try
+                 {:value  (~f ~@args)}
+                 (catch Exception e#
+                   {:error (girder.utils/stack-trace e#)})))
+         (close! c#))
+     c#))
+
+(defn c-fn
+  "Takes a function and returns a function that returns a channel that will receive {:value <result of applying the function to the arguments>} or {:error <stack trace>}."
+  [f & args]
+  (fn [& more-args]
+    (let [c (lchan #(str f ":" args))]
+      (go (>! c (try
+                  {:value (apply f (concat args more-args))}
+                  (catch Exception e
+                    {:error (girder.utils/stack-trace e)})))
+          (close! c))
+      c)))
+
+
+(defmacro cdefn
+  "Defines a function and returns a function that immediately returns a logged channel that will receive
+{:value <result of applying the function to the arguments>} or {:error <stack trace>}.  The forms will be executed within a go
+block, so they may appropriately use single-! functions in core.async.  Limitation: this macro doesn't do argument
+destructuring properly (or at all); it only works for boring argument lists."
+[fun args & forms]
+  `(defn ~fun ~args 
+     (let [c# (lchan (str ~(str fun) (str [~@args])))]
+       (go
+         (>! c#
+             (try {:value  (do ~@forms)}
+                  (catch Exception e# {:error (girder.utils/stack-trace e#)})))
+         (close! c#))
+       c#)))
 
 
 
@@ -99,50 +149,3 @@ If timbre debug level is :trace, then this channel will be instrumented."
             )
           {})))
 
-
-#_(defn lchan [name & [buf]]
-  (if-not (timbre/level-sufficient? :debug nil)
-    (async/chan buf)
-    (let [buf    (or buf 0)
-          buf    (if (number? buf) (async/buffer buf) buf)
-          buf    (LoggingBuffer. name buf)
-          c (async/chan buf)]
-      (lchans-start-cleanup)
-      (swap! lchans #(assoc-in % [name c] nil))
-      c)))
-
-#_(def wctl (async/chan))
-
-#_(defn wstate []
-  (let [wc (chan 100)]
-    (async/go-loop [cs {wctl ["control" wctl (LoggingBuffer. "control" (async/buffer 0))]}]
-      (let [[v ct]  (async/alts! (vec (keys cs)))]
-        (cond
-         (and (= ct wctl) (:stop v))  "stopped"
-         (and (= ct wctl) (:new v))   (let [[ch ct name buf] (:new v)]
-                                        (trace "New channel" name ch buf)
-                                        (recur (assoc cs ct [name ch buf])))
-         (and (= ct wctl) (:dump v)) (let [c   (:dump v)
-                                           res (map (fn [[ct [name ch buf]]] [ch name (-> buf .buf .buf)]) cs)]
-                                       (if (= (type wctl) (type c)) (>! c res) (info "Channel dump:" res))
-                                       (recur cs))
-         (nil? v)   (let [[name ch buf] (get cs ct)]
-                      (trace "Closed" name ch)
-                      (recur (dissoc cs ct)))
-         :else      (let [[name ch buf] (get cs ct)]
-                      (trace name ch "received:" v "buffer:" (.buf buf))
-                      (recur cs)))))
-    wctl))
-
-#_(defn wchan [name & [buf]]
-  (if-not (timbre/level-sufficient? :debug nil)
-    (async/chan buf)
-    (let [buf    (or buf 0)
-          buf    (if (number? buf) (async/buffer buf) buf)
-          lbuf   (LoggingBuffer. name buf)
-          ch (async/chan lbuf)
-          mu (async/mult ch)
-          ct (chan)
-          _  (async/tap mu ct)]
-      (>!! wctl {:new [ch ct name lbuf]})
-      ch)))

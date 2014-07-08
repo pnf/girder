@@ -24,66 +24,38 @@
     (apply vector f args)))
 
 (def ^:dynamic *nodeid*)
-
-(defmacro c-apply
-  "Takes a function and arguments, returning a channel, which will receive
-{:value <result of applying the function to the arguments>} or {:error <stack trace>}."
-  [f & args]
-  `(let [c# (lchan #(str "( "~f ~@args ")"))]
-     (go (>! c# (try
-                 {:value  (~f ~@args)}
-                 (catch Exception e#
-                   {:error (girder.utils/stack-trace e#)})))
-         (close! c#))
-     c#))
-
-(defn c-fn
-  "Takes a function and returns a function that returns a channel that will receive {:value <result of applying the function to the arguments>} or {:error <stack trace>}."
-  [f & args]
-  (fn [& more-args]
-    (let [c (lchan #(str f ":" args))]
-      (go (>! c (try
-                  {:value (apply f (concat args more-args))}
-                  (catch Exception e
-                    {:error (girder.utils/stack-trace e)})))
-          (close! c))
-      c)))
-
-
-(defmacro cdefn [fun args & forms]
-  `(defn ~fun ~args 
-     (let [c# (lchan (str ~(str fun) (str [~@args])))]
-       (go
-         (>! c#
-             (try {:value  (do ~@forms)}
-                  (catch Exception e# {:error (girder.utils/stack-trace e#)})))
-         (close! c#))
-       c#)))
-
+(def ^:dynamic *reqchan*)
 
 ;; State can be nil, :running or :done
 ;; Don't be paranoid about duplicates.  Worst that can happen is a multiple publish.
 ;; Even over-writing a done with a :running is OK, since nobody is supposed to read state directly.
 ;; A result will be a map keyed by :value &| :error.
-(defn- process-reqid [nodeid reqid]
+(defn- process-reqid [nodeid reqchan reqid]
   (let [c           (lchan #(str "process-reqid" nodeid reqid))
         [state val] (get-val  @back-end reqid :state)]
-    (go (binding [*nodeid* nodeid]
+    (go (binding [*nodeid*  nodeid
+                  *reqchan* reqchan]
           (>! c
               (condp = state
-                :running          (debug "process-reqid" reqid "already running" val)
+                :running          (do  (debug "process-reqid" reqid "already running" val) :running)
                 :done             (do (debug "process-reqid" reqid "already done" val)
-                                      (kv-publish @back-end reqid val))
+                                      (kv-publish @back-end reqid val)
+                                      :done)
                 nil               (let [state1     (set-val @back-end reqid :state [:running nodeid])
                                         _          (debug "process-reqid" reqid state1 "->" :running)
-                                        req        (req->reqid reqid)
+                                        req        (reqid->req reqid)
+                                        _ (debug req 1111111)
                                         [f & args] req
-                                        cres       (apply f args)
+                                        _ (debug f args 222222222)
+                                        cres       (try (apply f args)
+                                                        (catch Exception e {:error (girder.utils/stack-trace e)}))
                                         res        (<! cres)
+                                        _ (debug req res 333333)
                                         _          (close! cres) ;; to be careful
                                         state2     (set-val @back-end reqid :state [:done res])
                                         _          (debug "process-reqid" reqid state1 "->" state2 "->" :done res)]
-                                    (kv-publish @back-end reqid res)))))
+                                    (kv-publish @back-end reqid res)
+                                    :running))))
         (close! c))
     c))
 
@@ -100,15 +72,24 @@
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
   [reqs]
   (let [nodeid    *nodeid*
-        results   (async/map vector (map  #(enqueue nodeid %) reqs))
-        reqs      (clpop @back-end nodeid :requests)
-        out       (lchan (str "request-stuff " reqs))]
-    (async/go-loop []
-      (let [[c v] (async/alts! [results reqs])]
-        (if (= c results)
-          (>! out v)
-          (do (<! process-reqid nodeid v)
-              (recur)))))
+        reqchan   *reqchan*
+        out       (lchan #(str "enqeueue-reentrant results " reqs))]
+    (debug "enqueue-reentrant" nodeid reqs)
+    (go 
+      (if-not (seq reqs) (>! out [])
+              (let [results   (async/map vector (map #(enqueue nodeid %) reqs))
+                    results   (log-chan #(str "internal reentrant results:") results)]
+                (async/go-loop []
+                  (let [[v c] (async/alts! [results reqchan])]
+                    (if (= c results)
+                      (do 
+                        (trace "enqueue-reentrant got final results: " v)
+                        (>! out v)
+                        (close! c))
+                      (do
+                        (trace "enqueue-reentrant handling: " v)
+                        (<! (process-reqid nodeid reqchan v))
+                        (recur))))))))
     out))
 
 (defn unclaimed [reqid] (nil? (get-val  @back-end reqid :state)))
@@ -142,7 +123,7 @@
                           (debug "distributor" nodeid "recurring")
                           (recur true))
          :else        (let [[reqid volid] v]
-                        (debug nodeid "pushing" reqid "to request queue for" volid)
+                        (debug "distributor" nodeid "pushing" reqid "to request queue for" volid)
                         (when poolid (set-val @back-end nodeid :busy true))
                         (rpush @back-end volid :requests reqid)
                         (recur false)))))
@@ -160,13 +141,13 @@
         allreqs   (clpop @back-end nodeid :requests)
         reqs      (async/filter< unclaimed allreqs)]
     (async/go-loop [volunteering false]
-      (debug volunteering)
-      (let [[req ch]   (if volunteering
+      (debug "worker" nodeid "volunteering state=" volunteering)
+      (let [[reqid ch]   (if volunteering
                          (async/alts! [reqs ctl])
                          (async/alts! [reqs ctl] :default :empty))]
-        (debug "Worker" nodeid "received" req ch)
+        (debug "Worker" nodeid "received" reqid ch)
         (cond
-         (= req :empty) (do
+         (= reqid :empty) (do
                           (debug "worker" nodeid "is bored and volunteering with" poolid)
                           (rpush-and-set @back-end
                                          poolid :volunteers nodeid
@@ -175,9 +156,10 @@
          (= ch ctl)  (do (debug "Closing worker" nodeid)
                          (remove-member @back-end poolid :volunteers nodeid)
                          (close-all! reqs allreqs ctl))
-         :else        (when req
+         :else        (when reqid
+                        (debug "Worker" nodeid " nodeid will now process" reqid)
                         (set-val @back-end nodeid :busy true)
-                        (process-reqid nodeid req)
+                        (<! (process-reqid nodeid reqs reqid))
                         (recur false)))))
     ctl))
 
