@@ -22,48 +22,6 @@
 (defn vols-key [nodeid] (str "vol-queue-" nodeid))
 (defn val-key [reqid val-type ] (str (name val-type)  "-val-" reqid))
 
-(defmacro wcar2
-  "Evaluates body in the context of a thread-bound pooled connection to Redis
-  server. Sends Redis commands to server as pipeline and returns the server's
-  response. Releases connection back to pool when done.
-
-  `conn-opts` arg is a map with connection pool and spec options:
-    {:pool {} :spec {:host \"127.0.0.1\" :port 6379}} ; Default
-    {:pool {} :spec {:uri \"redis://redistogo:pass@panga.redistogo.com:9475/\"}}
-    {:pool {} :spec {:host \"127.0.0.1\" :port 6379
-                     :password \"secret\"
-                     :timeout-ms 6000
-                     :db 3}}
-
-  A `nil` or `{}` `conn-opts` will use defaults. A `:none` pool can be used
-  to skip connection pooling. For other pool options, Ref. http://goo.gl/EiTbn."
-  {:arglists '([conn-opts :as-pipeline & body] [conn-opts & body])}
-  [conn-opts & [s1 & sn :as sigs]]
-  `(let [context# protocol/*context*
-         [pool# conn#]    (if context#
-                            [nil  (:conn context#)]
-                            (conns/pooled-conn ~conn-opts))
-         ;; To support `wcar` nesting with req planning, we mimic
-         ;; `with-replies` stashing logic here to simulate immediate writes:
-         ?stashed-replies#
-         (when context#     (protocol/execute-requests :get-replies :as-pipeline))]
-
-     (try
-       (let [response# (protocol/with-context conn#
-                         (protocol/with-replies* ~@sigs))]
-         (when-not context# (conns/release-conn pool# conn#))
-         response#)
-
-       (catch Exception e#
-         (when-not context# (conns/release-conn pool# conn# e#)) (throw e#))
-
-       ;; Restore any stashed replies to preexisting context:
-       (finally
-         (when ?stashed-replies#
-           (car/parse nil ; Already parsed on stashing
-             (mapv car/return ?stashed-replies#)))))))
-
-
 (defrecord Redis-KV-Listener [topic publisher listener])
 
 (defrecord Redis-Backend [redis kvl]
@@ -96,11 +54,13 @@
           vkey (val-key   vkey val-type)
           r    (if (nil? vval)
                  (wcar (:redis this)
+                       ;(car/unwatch)
                        (car/multi)
                        (car/del vkey)
                        (car/rpush qkey qval)
                        (car/exec))
                  (wcar (:redis this)
+                       ;(car/unwatch)
                        (car/multi)
                        (car/set vkey vval)
                        (car/rpush qkey qval)
@@ -177,12 +137,12 @@
      enqueue-pred done-pred done-extract]
     (trace "enqeueue-listen at " nodeid " received: " reqid)
     ;; nested wcar - supposed to keep same connection
-    (let [redis (:redis this)
+    (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid)
       qkey (queue-key nodeid queue-type)
       vkey (val-key reqid val-type)
       c    (kv-listen this reqid)]
-      (wcar2
-       (let [v    (second (wcar2 redis
+      (wcar redis
+       (let [v    (second (wcar redis
                                 (car/watch vkey)
                                 (car/get vkey)))
              _     (trace "enqeueue-listen at" nodeid "found state of" reqid "=" v c)]
@@ -190,13 +150,13 @@
           (done-pred v)  (let [v (done-extract v)]
                            (trace "enqeue-listen" reqid "already done, publishing" v)
                            (go (>! c v) (close! c)))
-          (enqueue-pred v) (let [r (wcar2 redis  ;; will fail if vkey has been messed with.
+          (enqueue-pred v) (let [r (wcar redis  ;; will fail if vkey has been messed with.
                                          (car/multi)
                                          (car/rpush qkey reqid)
                                          (car/exec))]
                              (trace "enqueue-listen enqueueing" reqid r))
           :else           (trace "enqeue-listen" reqid "state already" v))
-         (wcar2 redis (car/unwatch))
+         (wcar redis (car/unwatch))
          ))
       c))
 
