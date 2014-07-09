@@ -13,7 +13,7 @@
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [com.datomic/datomic-pro "0.9.4766.11" :exclusions [[org.slf4j/log4j-over-slf4j]]]
                  [com.taoensso/timbre "3.2.0"] 
-                 [com.taoensso/carmine "2.6.0"]
+                 [com.taoensso/carmine "2.6.2-pnf-SNAPSHOT"]
                  [org.clojure/tools.cli "0.3.1"]
 
 ]
