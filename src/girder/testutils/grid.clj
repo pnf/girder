@@ -87,6 +87,7 @@ appropriate, and the elapsed :time in msec."
       (println opts)
       (do
         (timbre/set-level! (:log opts))
+        (timbre/set-config! [:standard-out :error?] true)
         (girder.grid.redis/init! (:host opts) (:port opts))
         (println (pr-str (doit opts)))
         (Thread/sleep (* 1000 (:hang opts)))

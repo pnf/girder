@@ -1,6 +1,7 @@
 (ns girder.testutils.bitemp
   (:require [clojure.tools.cli :refer [parse-opts]]
-            [girder.bitemp :as bt])
+            [girder.bitemp :as bt]
+            [taoensso.timbre :as timbre])
   (:gen-class))
 
 
@@ -49,6 +50,7 @@ appropriate, and the elapsed :time in msec."
    ["-q" "--num NUM" "Number of queries"
     :default 1
     :parse-fn #(Integer/parseInt %)]
+   [nil "--log LEVEL" "Debug level" :parse-fn keyword :default :debug]
    ["-i" "--id NUM" "Some id string"
     :default 0
     :parse-fn #(Integer/parseInt %)]])
@@ -60,6 +62,8 @@ appropriate, and the elapsed :time in msec."
         opts (:options parsed)
         opts (merge (dissoc opts :opts) (:opts opts))
         uri  (:uri opts)
+        _    (do (timbre/set-level! (:log opts))
+                 (timbre/set-config! [:standard-out :error?] true))
         res  (if errs parsed
                (timeit
                 (condp = (:command opts)

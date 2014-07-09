@@ -103,8 +103,9 @@
         allvols    (clpop @back-end nodeid :volunteers)
         vols       (async/filter< not-busy allvols)
         reqs+vols  (async/map vector [reqs vols])]
+    (debug "distributor" nodeid "starting")
     (async/go-loop [volunteering false]
-      (debug "distributor" nodeid "waiting for requests and volunteers")
+      (trace "distributor" nodeid "waiting for requests and volunteers")
       (let [[v c]       (if volunteering
                           (async/alts! [reqs+vols ctl])
                           (async/alts! [reqs+vols ctl] :default :empty))]
@@ -118,7 +119,7 @@
                             (rpush-and-set @back-end
                                            poolid :volunteers nodeid
                                            nodeid :busy nil))
-                          (debug "distributor" nodeid "recurring")
+                          (trace "distributor" nodeid "recurring")
                           (recur true))
          :else        (let [[reqid volid] v]
                         (debug "distributor" nodeid "pushing" reqid "to request queue for" volid)
@@ -138,8 +139,9 @@
   (let [ctl       (lchan (str "launch-worker " nodeid))
         allreqs   (clpop @back-end nodeid :requests)
         reqs      (async/filter< unclaimed allreqs)]
+    (debug "worker" nodeid "starting")
     (async/go-loop [volunteering false]
-      (debug "worker" nodeid "volunteering state=" volunteering)
+      (trace "worker" nodeid "volunteering state=" volunteering)
       (let [[reqid ch]   (if volunteering
                          (async/alts! [reqs ctl])
                          (async/alts! [reqs ctl] :default :empty))]
@@ -165,6 +167,7 @@
   "Copy reqs from our team."
   [nodeid cycle-msec]
   (let [ctl                (lchan (str "launch-helper nodeid"))]
+    (debug "worker" nodeid "starting")
     (async/go-loop []
       (let [member-nodeids   (get-members @back-end  nodeid :volunteers)
             in-our-queue     (set (qall @back-end nodeid :requests))
@@ -173,7 +176,7 @@
             additions   (clojure.set/difference in-member-queues in-our-queue)]
         ;(trace "helper" nodeid member-nodeids in-our-queue in-member-queues)
         (when (seq additions)
-          (debug "Helper" nodeid in-our-queue in-member-queues "liflting requests" additions)
+          (debug "Helper" nodeid in-our-queue in-member-queues "lifting requests" additions)
           (rpush-many @back-end nodeid :requests (vec additions))))
       (if (closed? ctl)
         (debug "Closing helper")

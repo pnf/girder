@@ -65,18 +65,18 @@
                        (car/set vkey vval)
                        (car/rpush qkey qval)
                        (car/exec)))]
-      (debug "rpush-and-set" qkey qval vkey vval r)))
+      (trace "rpush-and-set" qkey qval vkey vval r)))
 
   (clpop [this key queue-type]
     (let [key   (queue-key key queue-type)
           out   (lchan (str "clpop-" key))]
       (async/go-loop []
-        (debug "Calling blpop" key)
+        (trace "Calling blpop" key)
         (let [[qkey val] (wcar (:redis this) (car/blpop key 60))]
-          (debug "clpop" key "got" val "from redis list" qkey)
+          (trace "clpop" key "got" val "from redis list" qkey)
           (if (still-open? out)
             (do 
-              (debug "clpop" key "still running")
+              (trace "clpop" key "still running")
               (when val 
                 (debug "Pushing" val "onto" out)
                 (>! out val))
