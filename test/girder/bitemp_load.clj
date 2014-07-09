@@ -7,7 +7,7 @@
 (def nKeys 100)
 (def nTv 10)
 (def nTt 10)
-(def runjar ["java" "-jar" "girder.jar" "--opts"])
+(def runjar ["java" "-cp" "girder.jar" "girder.testutils.bitemp" "--opts"])
 (def insert-opts {:command "insert-lots" :nTt nTt :nTv nTv :nKeys nKeys}) ; :k0 :id
 (def query-opts {:command "query-lots" :nTv nTv :nKeys nKeys :num 10000});  :k0 :Tts
 
