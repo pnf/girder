@@ -24,7 +24,7 @@
   :test-paths ["test"]
 
 
-  :aot [girder.core  girder.gridrunner]
+  :aot [girder.testutils.bitemp  girder.testutils.grid]
   :uberjar-name "girder.jar"
 
 )

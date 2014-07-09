@@ -1,4 +1,4 @@
-(ns girder.back-end)
+(ns girder.grid.back-end)
 
 (defprotocol Girder-Backend 
 

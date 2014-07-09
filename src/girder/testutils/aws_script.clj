@@ -1,4 +1,4 @@
-(ns girder.aws-script 
+(ns girder.testutils.aws-script 
   (:use [amazonica.core]
         [amazonica.aws.ec2]
         )

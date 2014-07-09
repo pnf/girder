@@ -1,4 +1,4 @@
-(ns girder.core
+(ns girder.testutils.bitemp
   (:require [clojure.tools.cli :refer [parse-opts]]
             [girder.bitemp :as bt])
   (:gen-class))

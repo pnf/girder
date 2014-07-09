@@ -1,8 +1,8 @@
-(ns girder.async
+(ns girder.grid.async
   (:require [ clojure.core.async :as async 
               :refer [<! >! <!! >!! timeout chan alt!! go close!]]
             [taoensso.timbre :as timbre]
-            [girder.utils]
+            [girder.utils :as utils]
             [clojure.core.async.impl.protocols :as pimpl :refer [Buffer]]))
 (timbre/refer-timbre)
 
@@ -70,7 +70,7 @@ If timbre debug level is :trace, then this channel will be instrumented."
   [f & args]
   (if-not (timbre/level-sufficient? :trace nil)
     (apply fn->chan f args)
-    (let  [name   (str "(" (girder.utils/fname f) " " (clojure.string/join args " "))
+    (let  [name   (str "(" (utils/fname f) " " (clojure.string/join args " "))
            c     (lchan name)]
           (go (>! c (apply f args))
               (close! c))
@@ -84,7 +84,7 @@ If timbre debug level is :trace, then this channel will be instrumented."
      (go (>! c# (try
                  {:value  (~f ~@args)}
                  (catch Exception e#
-                   {:error (girder.utils/stack-trace e#)})))
+                   {:error (utils/stack-trace e#)})))
          (close! c#))
      c#))
 
@@ -96,7 +96,7 @@ If timbre debug level is :trace, then this channel will be instrumented."
       (go (>! c (try
                   {:value (apply f (concat args more-args))}
                   (catch Exception e
-                    {:error (girder.utils/stack-trace e)})))
+                    {:error (utils/stack-trace e)})))
           (close! c))
       c)))
 
@@ -112,7 +112,7 @@ destructuring properly (or at all); it only works for boring argument lists."
        (go
          (>! c#
              (try {:value  (do ~@forms)}
-                  (catch Exception e# {:error (girder.utils/stack-trace e#)})))
+                  (catch Exception e# {:error (utils/stack-trace e#)})))
          (close! c#))
        c#)))
 

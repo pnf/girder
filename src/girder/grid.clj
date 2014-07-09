@@ -1,6 +1,6 @@
 (ns girder.grid
-  (:use girder.back-end
-        girder.async)
+  (:use girder.grid.back-end
+        girder.grid.async)
   (:require  digest
              [girder.utils]
              [clj-time.core :as ct]
@@ -9,9 +9,7 @@
              [ clojure.core.async :as async 
               :refer [<! >! <!! >!! timeout chan alt!! go close!]]))
 (timbre/refer-timbre)
-
 ;;(timbre/set-level! :debug)
-;(girder.redis/init!)
 
 (def back-end (atom nil))
 

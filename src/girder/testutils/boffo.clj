@@ -1,17 +1,16 @@
-(ns user
+(ns girder.testutils.boffo
   (:require [clojure.tools.cli :refer [parse-opts]]
             [clojure.core.async :as async :refer [<! >! <!! >!! timeout chan alt!! go close!]]
             [taoensso.timbre :as timbre]
             [girder.utils]
-            girder.redis)
+            girder.grid.redis)
   (:use girder.grid
         girder.async))
 (timbre/refer-timbre)
 
 
-
 (timbre/set-level! :trace)
-(girder.redis/init!)
+(girder.grid.redis/init!)
 (cleanup)
 
 (cdefn bogosity [msec jobnum args]
@@ -39,5 +38,11 @@
 ;(def c (async/map vector (map #(enqueue "pool" [bogosity 2 % 111]) (range 5))))
 ;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 111]) (range 1))))
 ;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 1 5 111]) (range 1))))
-;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 111]) (range 5))))
+;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 111]) (range 5))))r
 
+(wcar red 
+      (let [v (second (wcar red (car/watch "foo") (car/get "foo")))]
+        (let [v2 (inc (read-string v))
+              r2 (wcar red (car/multi) (car/rpush "foop" v2) (car/exec))]
+          (when (nth r2 2) (println "succeeded"))
+          )))

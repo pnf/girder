@@ -1,6 +1,6 @@
-(ns girder.redis
+(ns girder.grid.redis
 "Implementation of KV-Listener-Manager and Girder-Backend using Redis."
-  (:use girder.async girder.back-end)
+  (:use girder.grid.async girder.grid.back-end)
   (:require [taoensso.carmine :as car :refer (wcar)]
             [taoensso.carmine
              (protocol    :as protocol)
