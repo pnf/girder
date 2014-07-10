@@ -5,7 +5,7 @@
             [girder.utils]
             girder.grid.redis)
   (:use girder.grid
-        girder.async))
+        girder.grid.async))
 (timbre/refer-timbre)
 
 
@@ -40,9 +40,4 @@
 ;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 1 5 111]) (range 1))))
 ;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 111]) (range 5))))r
 
-(wcar red 
-      (let [v (second (wcar red (car/watch "foo") (car/get "foo")))]
-        (let [v2 (inc (read-string v))
-              r2 (wcar red (car/multi) (car/rpush "foop" v2) (car/exec))]
-          (when (nth r2 2) (println "succeeded"))
-          )))
+
