@@ -1,7 +1,7 @@
-(ns girder.tests.bitemp
+(ns girder.tests.bitemp-load
   (:require [ clojure.core.async :as async 
              :refer [<! >! <!! >!! timeout chan alt!! go close! take!]])
-  (:use [girder.aws-script]))
+  (:use [girder.testutils.aws-script]))
 
 (def n 2)
 (def nKeys 100)
