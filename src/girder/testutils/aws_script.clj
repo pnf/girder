@@ -15,19 +15,27 @@
 ; "IamInstanceProfile" : {"Arn" : "arn:aws:iam::633840533036:instance-profile/datomic-aws-peer" }
 
 
+(def my-subnets {"us-east-1c"  "subnet-08eff44e"
+                 "us-east-1a"  "subnet-f290abda"
+                 "us-east-1b"  "subnet-572dd420"})
 
-(defn request-spots [n]
-  (let [r (request-spot-instances
-           :spot-price 			"0.005"
-           :instance-count 		n
-           :type 			"one-time"
-           :launch-specification 
-           {:image-id 			"ami-a048bec8"
-            :instance-type 		"t1.micro"
-            :placement                  {:availability-zone 	"us-east-1c"}
-            :key-name			"telekhine"
-            :security-groups		["launch-wizard-6"]
-            :iam-instance-profile       {:arn "arn:aws:iam::633840533036:instance-profile/girder-peer"}})]
+(defn request-spots [n & [zone itype price]]
+  (let [zone   (or zone "us-east-1c")
+        itype  (or itype "t1.micro")
+        price  (str (or price "0.005"))
+        req    [:spot-price 			price
+                :instance-count 		n
+                :type 			"one-time"
+                :launch-specification 
+                {:image-id 			"ami-5cd51634" ;"ami-a048bec8"
+                 :instance-type 		itype
+                 :placement                  zone
+                 :key-name			"telekhine"
+                 :security-groups-ids	["sg-78deaf1d"] 
+                 :subnet-id                  (get my-subnets zone)
+                 :iam-instance-profile       {:arn "arn:aws:iam::633840533036:instance-profile/girder-peer"}}]
+        r (apply request-spot-instances req)]
+    (println req)
     (map :spot-instance-request-id  (:spot-instance-requests r))))
 
 
@@ -67,6 +75,10 @@
   (let [ds (:reservations (describe-instances :instance-ids is))]
     (map #(get-in % [:instances 0 :public-dns-name]) ds)))
 
+(defn internal-ips [is]
+(let [ds (:reservations (describe-instances :instance-ids is))]
+    (map #(get-in % [:instances 0 :private-ip-address]) ds)))
+
 (defn terminate [is]
   (terminate-instances :instance-ids is))
 
@@ -85,11 +97,11 @@
 (defn bring-up-aws
   "Bring up n AWS t1.micro instances and return channel that will contain a single map
 of {:instance ids :hosts names and :sessions objects}."
-  [n]
+  [n & [zone instance-type spot-price]]
   (let [c    (chan)
         tout (timeout (* 60 1000 10))]
     (go 
-      (let [rs       (request-spots n)
+      (let [rs       (request-spots n zone instance-type spot-price)
             _        (println "requests" rs)
             _        (<! (timeout 1000))
             ss       (<! (patience-every #(= "active" %) #(request-status rs) 60000 tout))
@@ -97,10 +109,11 @@ of {:instance ids :hosts names and :sessions objects}."
             is       (request-instances rs)
             _        (println "instances" is)
             hosts    (dns-names is)
+            ips      (internal-ips is)
             _        (println "hosts" hosts)
             sessions (ssh-sessions hosts)
             _        (println "Done!")]
-        (>! c {:instances is :hosts hosts :sessions sessions}) (close! c)))
+        (>! c {:instances is :hosts hosts :sessions sessions :ips ips}) (close! c)))
     [c tout]))
 
 
