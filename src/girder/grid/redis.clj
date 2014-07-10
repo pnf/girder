@@ -54,13 +54,11 @@
           vkey (val-key   vkey val-type)
           r    (if (nil? vval)
                  (wcar (:redis this)
-                       ;(car/unwatch)
                        (car/multi)
                        (car/del vkey)
                        (car/rpush qkey qval)
                        (car/exec))
                  (wcar (:redis this)
-                       ;(car/unwatch)
                        (car/multi)
                        (car/set vkey vval)
                        (car/rpush qkey qval)
@@ -130,7 +128,7 @@
            {listener :listener} :kvl} this]
       (wcar redis (car/close-listener listener))))
 
-  (enqueue-listen
+  #_(enqueue-listen
     [this
      nodeid reqid
      queue-type val-type
@@ -138,6 +136,37 @@
     (trace "enqeueue-listen at " nodeid " received: " reqid)
     ;; nested wcar - supposed to keep same connection
     (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid)
+      qkey (queue-key nodeid queue-type)
+      vkey (val-key reqid val-type)
+      c    (kv-listen this reqid)]
+      (car/atomic redis 1
+       (let [_    (car/watch vkey)
+             v    (car/get vkey)
+             _     (trace "enqeueue-listen at" nodeid "found state of" reqid "=" v c)]
+         (cond
+          (done-pred v)  (let [v (done-extract v)]
+                           (trace "enqeue-listen" reqid "already done, publishing" v)
+                           (go (>! c v) (close! c)))
+          ;; If the following transaction fails, state must of changed to :running
+          ;; or :done, in which case someone else has or will soon have published
+          ;; the result.
+          (enqueue-pred v) (let [r     (do (car/multi)
+                                           (car/rpush qkey reqid)
+                                           (car/exec))]
+                             (trace "enqueue-listen enqueueing" reqid r))
+          :else           (trace "enqeue-listen" reqid "state already" v))
+         (car/unwatch)
+         ))
+      c))
+
+(enqueue-listen
+    [this
+     nodeid reqid
+     queue-type val-type
+     enqueue-pred done-pred done-extract]
+    (trace "enqeueue-listen at " nodeid " received: " reqid)
+    ;; nested wcar - supposed to keep same connection
+    (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid :single-conn true)
       qkey (queue-key nodeid queue-type)
       vkey (val-key reqid val-type)
       c    (kv-listen this reqid)]
