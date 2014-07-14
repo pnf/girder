@@ -185,8 +185,7 @@
                                          (car/exec))]
                              (trace "enqueue-listen enqueueing" reqid r))
           :else           (trace "enqeue-listen" reqid "state already" v))
-         (wcar redis (car/unwatch))
-         ))
+         (car/unwatch)))
       c))
 
   (clean-all [this] 
