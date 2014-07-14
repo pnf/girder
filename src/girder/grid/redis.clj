@@ -166,20 +166,20 @@
      enqueue-pred done-pred done-extract]
     (trace "enqeueue-listen at " nodeid " received: " reqid)
     ;; nested wcar - supposed to keep same connection
-    (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid :single-conn true)
+  (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid)  ;  :single-conn true
       qkey (queue-key nodeid queue-type)
       vkey (val-key reqid val-type)
       c    (kv-listen this reqid)]
       (wcar redis
-       (let [v    (second (wcar redis
-                                (car/watch vkey)
-                                (car/get vkey)))
+       (let [v  (second (protocol/with-replies* ; wcar redis  ;
+                          (car/watch vkey)
+                          (car/get vkey)))
              _     (trace "enqeueue-listen at" nodeid "found state of" reqid "=" v c)]
          (cond
           (done-pred v)  (let [v (done-extract v)]
                            (trace "enqeue-listen" reqid "already done, publishing" v)
                            (go (>! c v) (close! c)))
-          (enqueue-pred v) (let [r (wcar redis  ;; will fail if vkey has been messed with.
+          (enqueue-pred v) (let [r (protocol/with-replies* ; wcar redis  ;; will fail if vkey has been messed with.
                                          (car/multi)
                                          (car/rpush qkey reqid)
                                          (car/exec))]
@@ -189,7 +189,9 @@
          ))
       c))
 
-  (clean-all [this] (wcar (:redis this) (car/flushdb)))
+  (clean-all [this] 
+    (trace "Flushing redis" (:redis this))
+    (wcar (:redis this) (car/flushdb)))
 
 )
 
