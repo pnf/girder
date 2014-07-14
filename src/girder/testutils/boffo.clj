@@ -38,6 +38,7 @@
 ;(def c (async/map vector (map #(enqueue "pool" [bogosity 2 % 111]) (range 5))))
 ;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 111]) (range 1))))
 ;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 1 5 111]) (range 1))))
-;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 111]) (range 5))))r
+;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 211]) (range 10))))
+;(def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 211]) (range 50))))
 
 

@@ -41,10 +41,10 @@ appropriate, and the elapsed :time in msec."
    [nil "--helper MSECS" "Launch helper for the designated pool" :parse-fn #(Integer/parseInt %) :default nil]
    [nil "--jobs N" :default 0 :parse-fn #(Integer/parseInt %)]
    [nil "--jobtimeout SECS" "Time to wait." :parse-fn #(Integer/parseInt %) :default 10]
-   [nil "--reclevel N" "Number of recursions" :parse-fn #(Integer/parseInt %) :default 0]
+   [nil "--reclevel N" "Number of recursions" :parse-fn #(Integer/parseInt %) :default :info]
    [nil "--cleanup"]
    ["-i" "--id NUM" "Some id number" :default 0 :parse-fn #(Integer/parseInt %)]
-   [nil "--log LEVEL" "Debug level" :parse-fn keyword :default :debug]
+   [nil "--log LEVEL" "Debug level" :parse-fn keyword :default nil]
    ["-o" "--opts OPTS" "EDN string" :default nil :parse-fn read-string]
    [nil "--repl" "Set when running in REPL, so exit isn't called"]
    [nil "--hang SECS" "After launching, hang around for this period before exiting automatically."
@@ -53,7 +53,7 @@ appropriate, and the elapsed :time in msec."
    ["-h" "--help"]])
 
 (defn doit [opts]
-  (let [{:keys [reclevel cmt help id pool worker distributor host port jobmsecs jobs jobtimeout log helper cleanup]} opts]
+  (let [{:keys [reclevel cmt help id pool worker distributor host port jobmsecs jobs jobtimeout helper cleanup]} opts]
     (timeit id
             {:cleanup
              (when cleanup (grid/cleanup))
@@ -77,18 +77,23 @@ appropriate, and the elapsed :time in msec."
                  (let [[v ch] (async/alts!! [c t])]
                    (or v "timeout"))))}
             )))
+(def log-atom (atom []))
+
 
 (defn -main [& args]
   (let [parsed  (parse-opts args cli-options)
         errs (:errors parsed)
         opts (:options parsed)
         opts (merge (dissoc opts :opts) (:opts opts))]
-    (if (:help opts)
-      (println opts)
+    (cond
+     (:help opts) (println cli-options opts errs)
+     errs       (println errs)
+     :else
       (do
-        (timbre/set-level! (:log opts))
-        (timbre/set-config! [:standard-out :error?] true)
+        (gu/set-logging! (:log opts))
         (girder.grid.redis/init! (:host opts) (:port opts))
-        (println (pr-str (doit opts)))
-        (Thread/sleep (* 1000 (:hang opts)))
+        (println (pr-str (gu/with-accrued-log (doit opts))))
+        (when (pos? (:hang opts))
+          (Thread/sleep (* 1000 (:hang opts)))
+          (println (pr-str (gu/with-accrued-log (doit opts)))))
         (System/exit 0)))))

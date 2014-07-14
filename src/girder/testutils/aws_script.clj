@@ -19,7 +19,7 @@
                  "us-east-1a"  "subnet-f290abda"
                  "us-east-1b"  "subnet-572dd420"})
 
-(defn request-spots [n & [zone itype price]]
+(defn request-spots [n & {:keys [zone itype price]}]
   (let [zone   (or zone "us-east-1c")
         itype  (or itype "t1.micro")
         price  (str (or price "0.005"))
@@ -29,7 +29,7 @@
                 :launch-specification 
                 {:image-id 			"ami-5cd51634" ;"ami-a048bec8"
                  :instance-type 		itype
-                 :placement                  zone
+                 :placement      {:availability-zone      zone}
                  :key-name			"telekhine"
                  :security-groups-ids	["sg-78deaf1d"] 
                  :subnet-id                  (get my-subnets zone)
@@ -97,11 +97,12 @@
 (defn bring-up-aws
   "Bring up n AWS t1.micro instances and return channel that will contain a single map
 of {:instance ids :hosts names and :sessions objects}."
-  [n & [zone instance-type spot-price]]
+  [n & opts]
   (let [c    (chan)
         tout (timeout (* 60 1000 10))]
     (go 
-      (let [rs       (request-spots n zone instance-type spot-price)
+      (let [_        (println opts)
+            rs       (apply request-spots n opts)
             _        (println "requests" rs)
             _        (<! (timeout 1000))
             ss       (<! (patience-every #(= "active" %) #(request-status rs) 60000 tout))
