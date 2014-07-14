@@ -111,6 +111,7 @@ of {:instance ids :hosts names and :sessions objects}."
             _        (println "instances" is)
             hosts    (dns-names is)
             ips      (internal-ips is)
+            _        (<! (timeout 10000))
             _        (println "hosts" hosts)
             sessions (ssh-sessions hosts)
             _        (println "Done!")]
