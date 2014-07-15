@@ -14,7 +14,7 @@
                  [com.datomic/datomic-pro "0.9.4766.11" :exclusions [[org.slf4j/log4j-over-slf4j]]]
                  [com.taoensso/timbre "3.2.0"] 
                  ;[com.taoensso/carmine "2.6.2-pnf-SNAPSHOT"]
-                 [com.taoensso/carmine "2.6.2"]
+                 [com.taoensso/carmine "2.7.0-RC1"]
                  [org.clojure/tools.cli "0.3.1"]]
 
   :jvm-opts  ^:replace ["-Xmx1g" "-server" ] 
