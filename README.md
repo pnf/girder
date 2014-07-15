@@ -10,49 +10,40 @@ Don't.
 
 ### Grid
 
+A. Should operate at high throughput.  Aim for several ms overhead.
+B. Calculations are dispatched as requests consisting of vectors ```[function arg1 arg2 ...]```.
+C. Requests will be serialized, turning the function into a name-space qualified string and edenifying the
+   arguments.  Obviously, work can only be done at remote nodes that have function in their classpath.
+D. Fully support re-entrant requests, i.e. allow functions to make their own requests.  Doing this
+   without risking grid "starvation" (where requests cannot be processed because all workers claim to be
+   busy), but also efficiently and with predictable load.
+E. Interface is generally via core.async.
+F. An assumption throughout is that all requests are referentially transparent, and repeating the
+   evaluation of one will at worst result in unnecessary work.
+
+
 #### Hierarchy of peers.
-Multi layer strategy.  Everybody is a worker.  Everyone maintains queue.
- A. Compute nodes
+Multi layer strategy.  All nodes maintain a queue.
+
+A. Worker nodes
    1. Pull work only from own queueu.
    2. Push reentrant requests to own queue.
-   3  After making re-entrant request, work through own queue, then block for completion.
-   3. Ignore work marked done or in progress.
-   4. Volunteer at parent when free.
- B. Organizer nodes
+   3.  After making re-entrant request, work through own queue, then block for completion.
+   4. Ignore work marked done or in progress.
+   5. Volunteer at parent when free.
+ B. Distributor nodes
    1. Pull work from own queue
-   3. COPY work from member node queues to own after delay threshold, possibly zero.
    2. MOVE/push work to member node queues if they volunteer, possibly based on criteria, then unvolunteer them.
- C. Generative nodes
-   1. Pull work from own queue
-   2. Based on inspection of work, may create an appropriate volunteer.
-   3. Maintains knowledge of what it pushed down to which volunteer, so it can monitor them and possibly service requests
-      should the volunteer "quit".
+   3. Volunteer at parent when free
+ C. Helper nodes
+   1. COPY work up from members periodically, placing it at the end of our queue,
+      so it may be distributed to a volunteer if one is ready before
+      the worker we copied it from.
+   2. Generally share a pool with a distributor, otherwise it's kind of pointless.
 
-
-
-(condp = (GET state)
-  :unseen (do (queue local) (subscribe reqid))
-  :inprogress (do (subscribe reqid) (check state again))
-  :done (get it))
-
-#### REDIS data structures
-
-* req-set-PEERID
-* req-queue-PEERID      - lpop/rpush REQID
-* vol-queue-PEERID      - lpop/rpush PEERID
-* members-NODEID
-* chan-REQID         - publish STATE
-* listeners-REQID    - sadd/srem PEERID
-* value-REQID        - blob
-* state-REQID        - if in progress, will include location
-
-
-
-When finished computing:
-(PUT reqid-val value)
-(SET reqid-state :done)
-(PUBLISH reqid "done")
-
+Typical use would be to make top-level requests at a distributor pool, where they would be doled out to
+idle workers that had volunteered.  If workers themselves make requests, their queues may elongate, in which
+case the helper might hoist them upwards.
 
 
 
