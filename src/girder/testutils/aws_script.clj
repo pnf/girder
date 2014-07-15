@@ -72,8 +72,21 @@
     (map :instance-id (:spot-instance-requests d))))
 
 (defn dns-names [is]
-  (let [ds (:reservations (describe-instances :instance-ids is))]
-    (map #(get-in % [:instances 0 :public-dns-name]) ds)))
+  (loop [n 5]
+    (let [ds    (:reservations (describe-instances :instance-ids is))
+          names (map #(get-in % [:instances 0 :public-dns-name]) ds)]
+      (cond (or
+           (and (seq names)
+                (= (count names) (count is))
+                (every? string? names))
+           (zero? n))
+        names
+        (zero? n)
+        nil
+        :else
+        (do
+          (Thread/sleep 10000)
+          (recur (dec n)))))))r
 
 (defn internal-ips [is]
 (let [ds (:reservations (describe-instances :instance-ids is))]
@@ -89,9 +102,16 @@
 (def ag (ssh/ssh-agent {}))
 
 (defn ssh-sessions [hosts]
-  (map #(ssh/session ag % {:strict-host-key-checking :no
-                            :username "ec2-user"})
-       hosts))
+  (let [sess (map #(ssh/session ag % {:strict-host-key-checking :no
+                                      :username "ec2-user"})
+                  hosts)]
+    (loop [n 10]
+           (let [o (map #(or (ssh/connected? %) (ssh/connect %)) sess)]
+             (if (or (every? o)
+                     (zero? n)) sess
+                 (do 
+                   (Thread/sleep 1000)
+                   (recur (dec n))))))))
 
 
 (defn bring-up-aws
@@ -111,11 +131,12 @@ of {:instance ids :hosts names and :sessions objects}."
             _        (println "instances" is)
             hosts    (dns-names is)
             ips      (internal-ips is)
-            _        (<! (timeout 10000))
             _        (println "hosts" hosts)
             sessions (ssh-sessions hosts)
+            opn      (map #(or (ssh/connected? %) (ssh/connect %)) sessions)
+            
             _        (println "Done!")]
-        (>! c {:instances is :hosts hosts :sessions sessions :ips ips}) (close! c)))
+        (>! c {:instances is :hosts hosts :sessions sessions :ips ips :rs requests}) (close! c)))
     [c tout]))
 
 
