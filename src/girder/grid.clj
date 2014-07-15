@@ -98,9 +98,9 @@
    When we find one of each, add request to volunteer's queue."
   [nodeid & [poolid]]
   (let [ctl        (lchan (str  "launch-distributor " nodeid))
-        allreqs    (clpop @back-end nodeid :requests)
+        allreqs    (crpop @back-end nodeid :requests)
         reqs       (async/filter< unclaimed allreqs)
-        allvols    (clpop @back-end nodeid :volunteers)
+        allvols    (crpop @back-end nodeid :volunteers)
         vols       (async/filter< not-busy allvols)
         reqs+vols  (async/map vector [reqs vols])]
     (debug "distributor" nodeid "starting")
@@ -116,7 +116,7 @@
                         (close-all! reqs allreqs vols reqs+vols ctl))
          (= v :empty) (do (when poolid
                             (debug "distributor" nodeid "is bored and volunteering with" poolid)
-                            (rpush-and-set @back-end
+                            (lpush-and-set @back-end
                                            poolid :volunteers nodeid
                                            nodeid :busy nil))
                           (trace "distributor" nodeid "recurring")
@@ -124,7 +124,7 @@
          :else        (let [[reqid volid] v]
                         (debug "distributor" nodeid "pushing" reqid "to request queue for" volid)
                         (when poolid (set-val @back-end nodeid :busy true))
-                        (rpush @back-end volid :requests reqid)
+                        (lpush @back-end volid :requests reqid)  ; should bundle this with marking our work done
                         (recur false)))))
     ctl))
 
@@ -137,7 +137,7 @@
   [nodeid poolid]
   (add-member @back-end poolid :volunteers nodeid)
   (let [ctl       (lchan (str "launch-worker " nodeid))
-        allreqs   (clpop @back-end nodeid :requests)
+        allreqs   (crpop @back-end nodeid :requests)
         reqs      (async/filter< unclaimed allreqs)]
     (debug "worker" nodeid "starting")
     (async/go-loop [volunteering false]
@@ -149,7 +149,7 @@
         (cond
          (= reqid :empty) (do
                           (debug "worker" nodeid "is bored and volunteering with" poolid)
-                          (rpush-and-set @back-end
+                          (lpush-and-set @back-end
                                          poolid :volunteers nodeid
                                          nodeid :busy nil)
                           (recur true))
@@ -177,7 +177,7 @@
         ;(trace "helper" nodeid member-nodeids in-our-queue in-member-queues)
         (when (seq additions)
           (debug "Helper" nodeid in-our-queue in-member-queues "lifting requests" additions)
-          (rpush-many @back-end nodeid :requests (vec additions))))
+          (lpush-many @back-end nodeid :requests (vec additions))))
       (if (closed? ctl)
         (debug "Closing helper")
         (do 

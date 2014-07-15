@@ -13,7 +13,7 @@
              
              [ clojure.core.async :as async 
               :refer [<! >! <!! >!! timeout chan alt!! go close!]])
-  (:import [org.apache.commons.pool.impl GenericKeyedObjectPool]))
+ )
 
 (timbre/refer-timbre)
 
@@ -28,26 +28,26 @@
 
   Girder-Backend
 
-  (crpush [this key queue-type]
+  (clpush [this key queue-type]
     (let [redis  (:redis this)
           key (queue-key key queue-type)
-          in (lchan (str "crpush-" key))]
+          in (lchan (str "clpush-" key))]
       (async/go-loop []
         (let [val (<! in)]
           (if val
             (do
-              (wcar redis (car/rpush key val))
+              (wcar redis (car/lpush key val))
               (recur))
-            (debug "crpush" key queue-type "shutting down"))))
+            (debug "clpush" key queue-type "shutting down"))))
       in))
 
-  (rpush-many [this key queue-type vals]
-    (wcar (:redis this) (apply car/rpush (queue-key key queue-type) vals)))
+  (lpush-many [this key queue-type vals]
+    (wcar (:redis this) (apply car/lpush (queue-key key queue-type) vals)))
 
-  (rpush [this key queue-type val]
-    (wcar (:redis this) (car/rpush (queue-key key queue-type) val)))
+  (lpush [this key queue-type val]
+    (wcar (:redis this) (car/lpush (queue-key key queue-type) val)))
 
-  (rpush-and-set [this
+  (lpush-and-set [this
                   qkey queue-type qval
                   vkey val-type vval]
     (let [qkey (queue-key qkey queue-type)
@@ -56,30 +56,31 @@
                  (wcar (:redis this)
                        (car/multi)
                        (car/del vkey)
-                       (car/rpush qkey qval)
+                       (car/lpush qkey qval)
                        (car/exec))
                  (wcar (:redis this)
                        (car/multi)
                        (car/set vkey vval)
-                       (car/rpush qkey qval)
+                       (car/lpush qkey qval)
                        (car/exec)))]
-      (trace "rpush-and-set" qkey qval vkey vval r)))
+      (trace "lpush-and-set" qkey qval vkey vval r)))
 
-  (clpop [this key queue-type]
+  ;; Can we make this resiliant by 
+  (crpop [this key queue-type]
     (let [key   (queue-key key queue-type)
-          out   (lchan (str "clpop-" key))]
+          out   (lchan (str "crpop-" key))]
       (async/go-loop []
-        (trace "Calling blpop" key)
-        (let [[qkey val] (wcar (:redis this) (car/blpop key 60))]
-          (trace "clpop" key "got" val "from redis list" qkey)
+        (trace "Calling brpop" key)
+        (let [[qkey val] (wcar (:redis this) (car/brpop key 60))]
+          (trace "crpop" key "got" val "from redis list" qkey)
           (if (still-open? out)
             (do 
-              (trace "clpop" key "still running")
+              (trace "crpop" key "still running")
               (when val 
                 (debug "Pushing" val "onto" out)
                 (>! out val))
               (recur))
-            (debug "clpop" key queue-type "shutting down"))))
+            (debug "crpop" key queue-type "shutting down"))))
       out))
 
   (get-val [this key val-type] (wcar (:redis this) (car/get (val-key key val-type))))
@@ -151,7 +152,7 @@
           ;; or :done, in which case someone else has or will soon have published
           ;; the result.
           (enqueue-pred v) (let [r     (do (car/multi)
-                                           (car/rpush qkey reqid)
+                                           (car/lpush qkey reqid)
                                            (car/exec))]
                              (trace "enqueue-listen enqueueing" reqid r))
           :else           (trace "enqeue-listen" reqid "state already" v))
@@ -181,7 +182,7 @@
                            (go (>! c v) (close! c)))
           (enqueue-pred v) (let [r (protocol/with-replies* ; wcar redis  ;; will fail if vkey has been messed with.
                                          (car/multi)
-                                         (car/rpush qkey reqid)
+                                         (car/lpush qkey reqid)
                                          (car/exec))]
                              (trace "enqueue-listen enqueueing" reqid r))
           :else           (trace "enqeue-listen" reqid "state already" v))
@@ -223,8 +224,6 @@
                                  (car/subscribe topic))]
         (->Redis-KV-Listener topic publisher redis-listener)))
 
-(def pool-defaults {:when-exhausted-action GenericKeyedObjectPool/WHEN_EXHAUSTED_BLOCK
-                    :max-wait  -1})
 
 (defn init!
   ([host port]

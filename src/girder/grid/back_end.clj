@@ -4,12 +4,12 @@
 
   (clean-all [this] "Clear out database, or whatever")
 
-  (crpush [this key queue-type]
+  (clpush [this key queue-type]
     "Push onto the main key value pub/sub queue, via the channel, which is returned.")
-  (clpop [this key queue-type])
-  (rpush [this key queue-type val])
-  (rpush-many [this key queue-type vals])
-  (rpush-and-set [this
+  (crpop [this key queue-type])
+  (lpush [this key queue-type val])
+  (lpush-many [this key queue-type vals])
+  (lpush-and-set [this
                   qkey queue-type qval
                   vkey val-type vval])
 
@@ -36,4 +36,5 @@
     "Places the req on a queue, returning a channel containing updates to the request's state.
 Internally, the queue and request ids may be turned into specific keys for a queue, a publication
 topic and a state variable.  The two predicates, if specified, determine based on the state, whether
-something should be enqueued and whether the request should be considered complete."))
+something should be enqueued and whether the request should be considered complete.")
+  )
