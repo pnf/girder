@@ -1,9 +1,9 @@
-(ns girder.grid-test
+(ns acyclic.girder.grid-test
   (:require 
    [clj-ssh.ssh :as ssh]
    [clojure.core.async :as async 
              :refer [<! >! <!! >!! timeout chan alt!! go close!]])
-  (:use [girder.testutils.aws-script]))
+  (:use [acyclic.awsutils.aws-script]))
 
 
 ;; (def caws (first (bring-up-aws 10)))
@@ -14,6 +14,7 @@
 (def runjar ["java" "-cp" "girder.jar" "girder.testutils.grid" "--opts"])
 
 (defn download-jar [sessions] (async/map vector  (map #(ex-async  % "aws s3 cp s3://dist-ec2/girder.jar .") sessions)))
+
 
 (comment 
   (def a1 (bring-up-aws 1 :zone rgn :price 0.01 :itype "m3.medium"))

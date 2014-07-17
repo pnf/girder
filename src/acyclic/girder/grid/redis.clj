@@ -1,6 +1,6 @@
-(ns girder.grid.redis
+(ns acyclic.girder.grid.redis
 "Implementation of KV-Listener-Manager and Girder-Backend using Redis."
-  (:use girder.grid.async girder.grid.back-end)
+  (:use acyclic.girder.grid.async acyclic.girder.grid.back-end)
   (:require [taoensso.carmine :as car :refer (wcar)]
             [taoensso.carmine
              (protocol    :as protocol)
@@ -230,5 +230,5 @@
      (let [redis   {:pool {}
                     :spec {:host host :port port}}
            kvl     (kv-listener redis "CALCS")]
-       (reset! girder.grid/back-end (->Redis-Backend redis kvl))))
+       (reset! acyclic.girder.grid/back-end (->Redis-Backend redis kvl))))
   ([] (init! "localhost" 6379)))

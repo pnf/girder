@@ -1,7 +1,7 @@
-(ns girder.back-end-test
+(ns acyclic.girder.back-end-test
   (:use 
-   girder.back-end
-   girder.redis)
+   acyclic.girder.back-end
+   acyclic.girder.redis)
 
 (:require [ clojure.core.async :as async 
               :refer [<! >! <!! >!! timeout chan alt!! go close!]]))

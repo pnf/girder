@@ -1,8 +1,8 @@
-(ns girder.grid.async
+(ns acyclic.girder.grid.async
   (:require [ clojure.core.async :as async 
               :refer [<! >! <!! >!! timeout chan alt!! go close!]]
             [taoensso.timbre :as timbre]
-            [girder.utils :as utils]
+            [acyclic.utils.log :as ulog]
             [clojure.core.async.impl.protocols :as pimpl :refer [Buffer]]))
 (timbre/refer-timbre)
 
@@ -55,68 +55,6 @@
             (trace "Channel" name "created:" c2 "logging" c)
             (swap! lchans #(assoc % c2 name))
             c2)))
-
-(defn fn->chan
-  "Apply function to arguments, sending the result to a channel, which is returned." 
-  [f & args]
-  (let [c (chan)]
-    (go (>! c (apply f args))
-        (close! c))
-    c))
-
-(defn fn->lchan
-  "Apply function to arguments, sending the result to a channel, which is returned.
-If timbre debug level is :trace, then this channel will be instrumented." 
-  [f & args]
-  (if-not (timbre/level-sufficient? :trace nil)
-    (apply fn->chan f args)
-    (let  [name   (str "(" (utils/fname f) " " (clojure.string/join args " "))
-           c     (lchan name)]
-          (go (>! c (apply f args))
-              (close! c))
-          c)))
-
-(defmacro c-apply
-  "Takes a function and arguments, returning a channel, which will receive
-{:value <result of applying the function to the arguments>} or {:error <stack trace>}."
-  [f & args]
-  `(let [c# (lchan #(str "( "~f ~@args ")"))]
-     (go (>! c# (try
-                 {:value  (~f ~@args)}
-                 (catch Exception e#
-                   {:error (utils/stack-trace e#)})))
-         (close! c#))
-     c#))
-
-(defn c-fn
-  "Takes a function and returns a function that returns a channel that will receive {:value <result of applying the function to the arguments>} or {:error <stack trace>}."
-  [f & args]
-  (fn [& more-args]
-    (let [c (lchan #(str f ":" args))]
-      (go (>! c (try
-                  {:value (apply f (concat args more-args))}
-                  (catch Exception e
-                    {:error (utils/stack-trace e)})))
-          (close! c))
-      c)))
-
-
-(defmacro cdefn
-  "Defines a function and returns a function that immediately returns a logged channel that will receive
-{:value <result of applying the function to the arguments>} or {:error <stack trace>}.  The forms will be executed within a go
-block, so they may appropriately use single-! functions in core.async.  Limitation: this macro doesn't do argument
-destructuring properly (or at all); it only works for boring argument lists."
-[fun args & forms]
-  `(defn ~fun ~args 
-     (let [c# (lchan (str ~(str fun) (str [~@args])))]
-       (go
-         (>! c#
-             (try {:value  (do ~@forms)}
-                  (catch Exception e# {:error (utils/stack-trace e#)})))
-         (close! c#))
-       c#)))
-
-
 
 (defn- remove-if-closed [m c]
   (if-not (closed? c) m

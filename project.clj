@@ -1,6 +1,7 @@
-(defproject girder "0.1.0-SNAPSHOT"
-  :description "FIXME: write description"
-  :url "http://example.com/FIXME"
+(defproject acyclic/girder "0.1.0-SNAPSHOT"
+  :author "Peter Fraenkel <http://podsnap.com>"
+  :description "Distributed re-entrnt grid"
+  :url "http://github.com/pnf/girder"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :repositories [["sonatype" {:url "https://oss.sonatype.org/content/repositories/snapshots"
@@ -12,17 +13,16 @@
                  [clj-ssh "0.5.10"]
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [com.datomic/datomic-pro "0.9.4766.11" :exclusions [[org.slf4j/log4j-over-slf4j]]]
-                 [com.taoensso/timbre "3.2.0"] 
-                 ;[com.taoensso/carmine "2.6.2-pnf-SNAPSHOT"]
-                 [com.taoensso/carmine "2.7.0-RC1"]
-                 [org.clojure/tools.cli "0.3.1"]]
+                 [com.taoensso/timbre "3.2.0"]
+                 [acyclic/utils "0.1.0-SNAPSHOT"]
+                 [acyclic/awstools "0.1.0-SNAPSHOT"]
+                 [com.taoensso/carmine "2.7.0-RC1"]]
 
   :jvm-opts  ^:replace ["-Xmx1g" "-server" ] 
   :source-paths ["src"]
   :test-paths ["test"]
 
-
-  :aot [girder.testutils.bitemp  girder.testutils.grid]
+  :aot [acyclic.girder.testutils.grid]
   :uberjar-name "girder.jar"
 
 )
