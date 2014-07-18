@@ -102,23 +102,32 @@ and rethrown such that the outermost ```cdefn``` ends up returning something of 
 
 ### Redis Back-end
 
-There is an assumption of a central statekeeper back-end, of which multiple versions could exist, but
-only Redis has yet been implemented.
-
-
+There is an assumption of a central statekeeper back-end, of which
+multiple versions could exist, but only Redis has yet been
+implemented.
 
 #### Resiliance
 
 As noted, all requests are supposed to be referentially transparent,
 so in the worst case we can simply bounce everything.  That said, we
 would like to be able to kill and restart individual services with
-minimal disruption.  Currently, it is still possible to lose
-volunteers and requests that have been pulled off a redis queue onto
-an ```async``` channel, but not yet properly processed.
+minimal disruption.
 
-The standard Redis reliable queue strategies feel a little
-heavy-weight.  I'm trying to think of something that will err on the
-side of retaining too many requests.
+An important internal function is ```crpop```, which essentially turns
+a Redis queue into an ```async``` channel.  Once a request has been popped
+from Redis and placed onto the channel, there is a potential hole, where
+a process might go down before the request is processed.  For this reason,
+```crpop``` uses Redis' ```BRPOPLPUSH```, which atomically pops from one
+list and pushes onto another.  This "backup" list only gets cleared once
+the request has been safely dealt with.
+
+Untimely process deaths will result in prevalence of Redis keys like
+```requests-queue-bak-poolname```, which contain the possibly unprocessed
+requests.
+
+There is not yet any automatic recovery, which would entail checking on
+launch for backup queues and then transferring their content to request
+queues.  This is coming soon....
 
 ## License
 
