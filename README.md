@@ -100,8 +100,6 @@ and rethrown such that the outermost ```cdefn``` ends up returning something of 
 
 
 
-
-
 ### Redis Back-end
 
 There is an assumption of a central statekeeper back-end, of which multiple versions could exist, but
@@ -111,13 +109,16 @@ only Redis has yet been implemented.
 
 #### Resiliance
 
-As noted, all requests are supposed to be referentially transparent, so in the worst case we can simply
-bounce everything.  That said, we would like to be able to kill and restart individual services with
-minimal disruption.  Currently, it is still possible to lose volunteers and requests that have been pulled off
-a redis queue onto an ```async``` channel, but not yet properly processed.
+As noted, all requests are supposed to be referentially transparent,
+so in the worst case we can simply bounce everything.  That said, we
+would like to be able to kill and restart individual services with
+minimal disruption.  Currently, it is still possible to lose
+volunteers and requests that have been pulled off a redis queue onto
+an ```async``` channel, but not yet properly processed.
 
-The standard Redis reliable queue strategies feel a little heavy-weight.  I'm trying to think of something that will
-err on the side of retaining too many requests.
+The standard Redis reliable queue strategies feel a little
+heavy-weight.  I'm trying to think of something that will err on the
+side of retaining too many requests.
 
 ## License
 
