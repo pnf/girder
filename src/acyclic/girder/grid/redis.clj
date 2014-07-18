@@ -18,6 +18,7 @@
 (timbre/refer-timbre)
 
 (defn queue-key [nodeid queue-type] (str (name queue-type) "-queue-" nodeid))
+(defn queue-bak-key [nodeid queue-type] (str (name queue-type) "-queue-bak-" nodeid))
 (defn set-key [nodeid set-type] (str (name set-type) "-set-" nodeid))
 (defn vols-key [nodeid] (str "vol-queue-" nodeid))
 (defn val-key [reqid val-type ] (str (name val-type)  "-val-" reqid))
@@ -65,13 +66,19 @@
                        (car/exec)))]
       (trace "lpush-and-set" qkey qval vkey vval r)))
 
+  (clear-bak [this qkeys-qtypes]
+    (wcar (:redis this)
+          (doseq [[qkey queue-type] (partition 2 qkeys-qtypes)]
+            (car/del (queue-bak-key qkey queue-type)))))
+
   ;; Can we make this resiliant by 
   (crpop [this key queue-type]
-    (let [key   (queue-key key queue-type)
+    (let [qkey   (queue-key key queue-type)
+          bkey  (queue-bak-key key queue-type)
           out   (lchan (str "crpop-" key))]
       (async/go-loop []
-        (trace "Calling brpop" key)
-        (let [[qkey val] (wcar (:redis this) (car/brpop key 60))]
+        (trace "Calling brpoplpush" key)
+        (let [val (wcar (:redis this) (car/brpoplpush qkey bkey 60))]
           (trace "crpop" key "got" val "from redis list" qkey)
           (if (still-open? out)
             (do 

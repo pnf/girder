@@ -174,7 +174,7 @@ destructuring properly (or at all); it only works for boring argument lists."
              vols       (async/filter< not-busy allvols)
              reqs+vols  (async/map vector [reqs vols])]
          (debug "distributor" nodeid "starting")
-         (add-member @back-end poolid :volunteers nodeid)
+         (when poolid  (add-member @back-end poolid :volunteers nodeid))
          (async/go-loop [volunteering false]
            (trace "distributor" nodeid "waiting for requests and volunteers")
            (let [[v c]       (if volunteering
@@ -195,7 +195,8 @@ destructuring properly (or at all); it only works for boring argument lists."
               :else        (let [[reqid volid] v]
                              (debug "distributor" nodeid "pushing" reqid "to request queue for" volid)
                              (when poolid (set-val @back-end nodeid :busy true))
-                             (lpush @back-end volid :requests reqid)  ; should bundle this with marking our work done
+                             (lpush @back-end volid :requests reqid)
+                             (clear-bak @back-end [nodeid :volunteers nodeid :requests])
                              (recur false)))))
          ctl)))
 
@@ -220,6 +221,7 @@ destructuring properly (or at all); it only works for boring argument lists."
         (cond
          (= reqid :empty) (do
                           (debug "worker" nodeid "is bored and volunteering with" poolid)
+                          (clear-bak @back-end [nodeid :requests])
                           (lpush-and-set @back-end
                                          poolid :volunteers nodeid
                                          nodeid :busy nil)

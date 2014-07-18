@@ -12,7 +12,7 @@
   (lpush-and-set [this
                   qkey queue-type qval
                   vkey val-type vval])
-
+  (clear-bak [this qkeys-qtypes])
   (get-members [this key set-type])
   (get-val [this key val-type])
   (set-val  [this key val-type val])
