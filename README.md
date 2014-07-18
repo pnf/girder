@@ -1,32 +1,41 @@
 # girder
 
-Distributed, high-performance calculation grid with re-entrant capabilities.
+Distributed, high-performance calculation grid with for distributed
+computation.
 
 ## Usage
 
 Don't.
 
-## Design goals
+## Design goals and principles
 
-A. Should operate at high throughput.  Aim for several ms overhead.
-B. Requests should be built with ordinary clojure functions and values.
-C. Return values are cached.
-D. Fully support re-entrant requests, i.e. allow functions to make their own requests.  Doing this
-   without risking grid "starvation" (where requests cannot be processed because all workers claim to be
-   busy), but also efficiently and with predictable load.
-E. Interface is generally via core.async.
-F. An assumption throughout is that all requests are referentially transparent, and repeating the
-   evaluation of one will at worst result in unnecessary work.
+* Support _emergent graphs_, i.e. computations running on the grid may
+  request and use the results of other computations on the grid,
+  but we don't claim to know the data-flow graph in advance.
+* We must therefore fully support re-entrant requests.  When
+  functions to make their own requests, we do not risk grid
+  "starvation" (where requests cannot be processed because all workers
+  claim to be busy), but also efficiently and with predictable load.
+* Should operate at high throughput.  Aim for several ms overhead.
+* Requests should be built with ordinary clojure functions and values.
+* Return values are cached.
+* Interface is generally via ```core.async```.  Requests for computations
+  return channels, which will eventually deliver results.
+* Assume throughout that all requests are referentially
+  transparent so that
+  * repeating the evaluation of one will at worst
+    result in unnecessary work
+  * it is valid and safe to get back a cached result
 
 ## Notes on strategy
 
-A. Worker nodes
+* Worker nodes
    1. Pull work only from own queueu.
    2. Push reentrant requests to own queue.
    3. After making re-entrant request, work through own queue, then block for completion.
    4. Ignore work marked done or in progress.
    5. Volunteer at parent when free.
- B. Distributor nodes
+* Distributor nodes
    1. Pull work from own queue
    2. MOVE/push work to member node queues if they volunteer, possibly based on criteria, then unvolunteer them.
    3. Volunteer at parent when free
