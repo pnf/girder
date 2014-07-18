@@ -57,19 +57,27 @@ return a result of the form
    :error OPTIONAL-ERROR}
 ~~~
 
-The ```acyclic.girder.grid.async.cdefn``` macro facilitates writing functions like this.  Essentially, you
-use it as if it were ```defn```, returning a plain result value.  It will all get wrapped up properly, becoming
-a function that returns a channel that delivers a map, even populating ```:error``` with a stack-trace and other niceties if
-an exception is thrown somewhere.  Furthermore, all forms will be executed within an ```async/go``` block, so
-you could do something fancy if you wanted.  If, for example, a function
-were to communicate with a non-JVM process, ```async``` might very well be
-involved.
+The ```acyclic.girder.grid.async.cdefn``` macro facilitates writing
+functions like this.  Essentially, you use it as if it were
+```defn```, returning a plain result value.  It will all get wrapped
+up properly, becoming a function that returns a channel that delivers
+a map, even populating ```:error``` with a stack-trace and other
+niceties if an exception is thrown somewhere.  Furthermore, all forms
+will be executed within an ```async/go``` block, so you could do
+something fancy if you wanted.  If, for example, a function were to
+communicate with a non-JVM process, ```async``` might very well be
+involved.  It is also reasonable for the function to interact with
+databases of its own; for example, it might memoize its output in a
+disk- and/or cluster-based store, and then return to girder only a UUID key.
 
-The request is going to be serialized.  The function, in particular, will be passed as a string containing its
-fully name-space qualified name.  This string will be ```resolve```ed eventually, so the function must
-exist in the JVM that processes the request.  No magic: you have to distribute uberjars.  The remaining arguments
-will be serialized/deserialized with ```pr-str```/```read-string```, so pretty much any Clojure structures will
-work here, but they shouldn't contain closures or other functions.
+The request is going to be serialized.  The function, in particular,
+will be passed as a string containing its fully name-space qualified
+name.  This string will be ```resolve```ed eventually, so the function
+must exist in the JVM that processes the request.  No magic: you have
+to distribute uberjars.  The remaining arguments will be
+serialized/deserialized with ```pr-str```/```read-string```, so pretty
+much any Clojure structures will work here, but they shouldn't contain
+closures or other functions.
 
 A request is submitted by
 ~~~.clj
@@ -128,6 +136,11 @@ requests.
 There is not yet any automatic recovery, which would entail checking on
 launch for backup queues and then transferring their content to request
 queues.  This is coming soon....
+
+Of course Redis itself might go down, but I've decided that this
+presumably rare occurrence is sufficiently mitigated by referential
+transparency.  In the event of an "outage," it may be necessary to resubmit
+external requests to the system.
 
 ## License
 
