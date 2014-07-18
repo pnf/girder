@@ -13,19 +13,24 @@ Don't.
   request and use the results of other computations on the grid,
   but we don't claim to know the data-flow graph in advance.
 * We must therefore fully support re-entrant requests.  When
-  functions to make their own requests, we do not risk grid
+  functions make their own requests, we must not risk grid
   "starvation" (where requests cannot be processed because all workers
-  claim to be busy), but also efficiently and with predictable load.
+  claim to be busy, when they are in fact in a wait state),
+  but also efficiently and with predictable load.
 * Should operate at high throughput.  Aim for several ms overhead.
 * Requests should be built with ordinary clojure functions and values.
-* Return values are cached.
-* Interface is generally via ```core.async```.  Requests for computations
-  return channels, which will eventually deliver results.
-* Assume throughout that all requests are referentially
-  transparent so that
+* Return values are cached, which implies anassumption 
+  that all requests are referentially transparent, further implying:
   * repeating the evaluation of one will at worst
     result in unnecessary work
   * it is valid and safe to get back a cached result
+* Interface is generally via ```core.async```.  Requests for computations
+  return channels, which will eventually deliver results.
+* We rely internally on ```async``` to coordinate data flow without directly
+  playing with thread pools.
+* There will be a central statekeeper (Redis, at this point),
+  easing reliable coordination and facilitating reporting on the state of the system.
+
 
 ## Notes on strategy
 
