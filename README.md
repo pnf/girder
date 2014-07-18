@@ -104,7 +104,7 @@ The functions just discussed are allowed to enqueue requests of their own:
 where the second argument is a sequence of requests in standard form.  This
 "blocks" (in a ```go```-ish sense), eventually returning a sequence of results.
 These are true results, not encased in ```{:value ...}```.  In the event of
-an exception from one of the re-entrant calls, the exception will be enriched
+an error from one of the re-entrant calls, the exception will be enriched
 and rethrown such that the outermost ```cdefn``` ends up returning something of the form
 ~~~.clj
 {:error {:msg "Error from request"
@@ -114,7 +114,9 @@ and rethrown such that the outermost ```cdefn``` ends up returning something of 
 	            [another-bad-req 3 "blah"]       {:stack [...]
 		                                         :msg "Smelly value"}}}}
 ~~~												 
-
+Note that ```call-reentrant``` is a macro that does the ```<!``` wait and
+deals with errors.  You could call the ```enqueue-reentrant``` function
+directly and read from the channel it returns.
 
 
 ### Redis Back-end
@@ -157,3 +159,4 @@ Copyright © 2014 Peter Fraenkel
 
 Distributed under the Eclipse Public License either version 1.0 or (at
 your option) any later version.
+
