@@ -30,12 +30,9 @@
 
 (grid/cdefn recbog [msec jobnum reclevel numrecjobs args]
   (let [_ (debug "here we are in recbog")
-        reqs (map #(vector recbog msec % (dec reclevel)  numrecjobs args) (range reclevel))
+        reqs (map #(recbog msec % (dec reclevel)  numrecjobs args) (range reclevel))
         _   (debug "recbog asking for" reqs)
-        cre (grid/enqueue-reentrant reqs)
-        res (<! cre)
-        _   (debug "recbog got" res)
-        vs  (map :value res)]
+        vs  (grid/call-reentrant reqs)]
     (Thread/sleep msec)
     (str "RecBog:" grid/*nodeid* ":" jobnum ":" msec ":" reclevel ":" args ":[" (clojure.string/join "," (map str vs)) "]")    ))
 

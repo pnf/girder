@@ -12,7 +12,6 @@
                  [amazonica "0.2.16"]
                  [clj-ssh "0.5.10"]
                  [org.clojure/core.async "0.1.303.0-886421-alpha"]
-                 [com.datomic/datomic-pro "0.9.4766.11" :exclusions [[org.slf4j/log4j-over-slf4j]]]
                  [com.taoensso/timbre "3.2.0"]
                  [acyclic/utils "0.1.0-SNAPSHOT"]
                  [acyclic/awstools "0.1.0-SNAPSHOT"]

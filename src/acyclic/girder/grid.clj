@@ -15,37 +15,41 @@
 
 (def back-end (atom nil))
 
-(defn req->reqid [[f & args]]
-  (pr-str (concat [(ulog/fname f)] args)))
-
-(defn reqid->req [reqid]
-  (let [[f & args]  (read-string reqid)
-        f           (resolve (symbol f))]
-    (apply vector f args)))
-
 (def ^:dynamic *nodeid*)
 (def ^:dynamic *reqchan*)
 (def ^:dynamic *current-req*)
+(def ^:dynamic *current-reqid*)
+;(def ^:dynamic *trail* ())
+
+(defn req->reqid [[f & args]]
+  (pr-str (concat [(ulog/fname f)] args)))
 
 (defn format-exception [e]
-  (let [m {:req (req->reqid *current-req*)
+  (let [m {:req *current-reqid*
            :msg (.getMessage e)
            :stack (ulog/stack-trace e)}
         i  (ex-data e)]
     (if i (assoc m :info i) m)))
 
-(defn cfn
-  "Takes a function and returns a function that returns a channel that will receive {:value <result of applying the function to the arguments>} or {:error <stack trace>}."
-  [f & args]
-  (fn [& more-args]
+
+(defn- cfn [f]
+  (fn [& args]
     (let [c (lchan #(str f ":" args))]
       (go (>! c (try
-                  {:value (apply f (concat args more-args))}
+                  {:value (apply f args)}
                   (catch Exception e
                     {:error (format-exception e)})))
           (close! c))
       c)))
 
+
+(defn reqid->req [reqid]
+  (let [[f & args]  (read-string reqid)
+        f           (resolve (symbol f))
+        g           (:girded (meta f))
+        _           (debug "Girded=" g)
+        f           (if g f (cfn f))]
+    (apply vector f args)))
 
 
 
@@ -55,46 +59,48 @@
 block, so they may appropriately use single-! functions in core.async.  Limitation: this macro doesn't do argument
 destructuring properly (or at all); it only works for boring argument lists."
 [fun args & forms]
-  `(defn ~fun ~args 
-     (let [c# (lchan (str ~(str fun) (str [~@args])))]
-       (go
-         (>! c#
-             (try {:value  (do ~@forms)}
-                  (catch Exception e# {:error (format-exception e#)})))
-         (close! c#))
-       c#)))
+`(defn ~(vary-meta fun assoc :girded true)  ~args 
+   (let [c# (lchan (str ~(str fun) (str [~@args])))]
+     (go
+       (>! c#
+           (try {:value  (do ~@forms)}
+                (catch Exception e# {:error (format-exception e#)})))
+       (close! c#))
+     c#)))
 
-;; State can be nil, :running or :done
-;; Don't be paranoid about duplicates.  Worst that can happen is a multiple publish.
-;; Even over-writing a done with a :running is OK, since nobody is supposed to read state directly.
-;; A result will be a map keyed by :value &| :error.
+  ;; State can be nil, :running or :done
+  ;; Don't be paranoid about duplicates.  Worst that can happen is a multiple publish.
+  ;; Even over-writing a done with a :running is OK, since nobody is supposed to read state directly.
+  ;; A result will be a map keyed by :value &| :error.
 (defn- process-reqid [nodeid reqchan reqid]
-  (let [c           (lchan #(str "process-reqid" nodeid reqid))
-        [state val] (get-val  @back-end reqid :state)]
-    (go (binding [*nodeid*  nodeid
-                  *reqchan* reqchan]
-          (>! c
-              (condp = state
-                :running          (do  (debug "process-reqid" reqid "already running" val) :running)
-                :done             (do (debug "process-reqid" reqid "already done" val)
-                                      (kv-publish @back-end reqid val)
-                                      :done)
-                nil               (let [state1     (set-val @back-end reqid :state [:running nodeid])
-                                        _          (debug "process-reqid" reqid state1 "->" :running)
-                                        req        (reqid->req reqid)
-                                        [f & args] req
-                                        cres       (binding [*current-req* req]
-                                                     (try (apply f args)
-                                                          (catch Exception e {:error (ulog/stack-trace e)})))
-                                        res        (<! cres)
-                                        _ (debug req res 333333)
-                                        _          (close! cres) ;; to be careful
-                                        state2     (set-val @back-end reqid :state [:done res])
-                                        _          (debug "process-reqid" reqid state1 "->" state2 "->" :done res)]
-                                    (kv-publish @back-end reqid res)
-                                    :running))))
-        (close! c))
-    c))
+    (let [c           (lchan #(str "process-reqid" nodeid reqid))
+          [state val] (get-val  @back-end reqid :state)]
+      (go (binding [*nodeid*  nodeid
+                    *reqchan* reqchan]
+            (>! c
+                (condp = state
+                  :running          (do  (debug "process-reqid" reqid "already running" val) :running)
+                  :done             (do (debug "process-reqid" reqid "already done" val)
+                                        (kv-publish @back-end reqid val)
+                                        :done)
+                  nil               (let [state1     (set-val @back-end reqid :state [:running nodeid])
+                                          _          (debug "process-reqid" reqid state1 "->" :running)
+                                          req        (reqid->req reqid)
+                                          _          (debug "req=" req)
+                                          [f & args] req
+                                          _          (debug "meta f" (meta f))
+                                          cres       (binding [*current-req*   req
+                                                               *current-reqid* reqid]
+                                                       (try (apply f args)
+                                                            (catch Exception e {:error (ulog/stack-trace e)})))
+                                          res        (<! cres)
+                                          _          (close! cres) ;; to be careful
+                                          state2     (set-val @back-end reqid :state [:done res])
+                                          _          (debug "process-reqid" reqid state1 "->" state2 "->" :done res)]
+                                      (kv-publish @back-end reqid res)
+                                      :running))))
+          (close! c))
+      c))
 
 
 (defn enqueue [nodeid req]
@@ -104,6 +110,10 @@ destructuring properly (or at all); it only works for boring argument lists."
                   nil?
                   (fn [[s _]] (= s :done))
                   (fn [[_ v]] v)))
+
+(defn benqueue [nodeid req]
+  (<!! (enqueue nodeid req)))
+
 
 (defn enqueue-reentrant
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
@@ -129,6 +139,8 @@ destructuring properly (or at all); it only works for boring argument lists."
                         (recur))))))))
     out))
 
+
+
 (defn ex-aggregate-errors [reqs res]
   (let [r+e (filter second (map #(vector %1 (:error %2)) reqs res))
         m   (reduce #(assoc %1 (req->reqid (first %2)) (second %2)) {} r+e)]
@@ -139,6 +151,9 @@ destructuring properly (or at all); it only works for boring argument lists."
      (if (some :error res#)
        (throw (ex-aggregate-errors ~reqs res#))
        (map :value res#))))
+
+;(defmacro req [form] (apply vector form))
+;(defmacro reqs [& forms] (vec  (map #(apply vector %) forms)))
 
 (defn unclaimed [reqid] (nil? (get-val  @back-end reqid :state)))
 (defn not-busy [nodeid] (nil? (get-val @back-end nodeid :busy)))
@@ -260,7 +275,6 @@ destructuring properly (or at all); it only works for boring argument lists."
     ctl))
 
 (defn cleanup [] (clean-all @back-end))
-
 
 
 
