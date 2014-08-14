@@ -3,54 +3,13 @@
 Distributed, high-performance calculation grid with for distributed
 computation.
 
+## Design goals and principles
+
+See http://podsnap.com/girder.html
+
 ## Usage
 
 Don't.
-
-## Design goals and principles
-
-* Support _emergent graphs_, i.e. computations running on the grid may
-  request and use the results of other computations on the grid,
-  but we don't claim to know the data-flow graph in advance.
-* We must therefore fully support re-entrant requests.  When
-  functions make their own requests, we must not risk grid
-  "starvation" (where requests cannot be processed because all workers
-  claim to be busy, when they are in fact in a wait state),
-  but also efficiently and with predictable load.
-* Should operate at high throughput.  Aim for several ms overhead.
-* Requests should be built with ordinary clojure functions and values.
-* Return values are cached, which implies anassumption 
-  that all requests are referentially transparent, further implying:
-  * repeating the evaluation of one will at worst
-    result in unnecessary work
-  * it is valid and safe to get back a cached result
-* Interface is generally via ```core.async```.  Requests for computations
-  return channels, which will eventually deliver results.
-* We rely internally on ```async``` to coordinate data flow without directly
-  playing with thread pools.
-* There will be a central statekeeper (Redis, at this point),
-  easing reliable coordination and facilitating reporting on the state of the system.
-
-
-## Notes on strategy
-
-* Worker nodes
-   1. Pull work only from own queueu.
-   2. Push reentrant requests to own queue.
-   3. After making re-entrant request, work through own queue, then block for completion.
-   4. Ignore work marked done or in progress.
-   5. Volunteer at parent when free.
-* Distributor nodes
-   1. Pull work from own queue
-   2. MOVE/push work to member node queues if they volunteer, possibly based on criteria, then unvolunteer them.
-   3. Volunteer at parent when free
-   4. COPY work up from members periodically (e.g. every 100ms), placing it at the end of our queue,
-      so it may be distributed to a volunteer if one is ready before
-      the worker we copied it from gets to it.  Work thus tends to remain local.
-
-Typical use would be to make top-level requests at a distributor pool, where they would be doled out to
-idle workers that had volunteered.  If workers themselves make requests, their queues may elongate, in which
-case the helper might hoist them upwards.
 
 ## Usage, if you must
 
