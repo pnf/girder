@@ -7,12 +7,6 @@
 (timbre/refer-timbre)
 
 
-(cdefn invo [x] 
-       (float (/ 1.0 x)))
-
-(cdefn foo1 [x1 x2 bleh]
-       (let [[y1 y2] (call-reentrant [[invo x1] [invo x2]])]
-         (str "foo:" y1 ":" y2)))
 
 (timbre/set-level! :trace)
 (acyclic.girder.grid.redis/init!)
