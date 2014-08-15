@@ -113,10 +113,8 @@ destructuring properly (or at all); it only works for boring argument lists."
 
 (defn enqueue-reentrant
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
-  [reqs]
-  (let [nodeid    *nodeid*
-        reqchan   *reqchan*
-        out       (lchan #(str "enqeueue-reentrant results " reqs))]
+  [reqs nodeid reqchan]
+  (let [out       (lchan #(str "enqeueue-reentrant results " reqs))]
     (debug "enqueue-reentrant" nodeid reqs)
     (go 
       (if-not (seq reqs) (>! out [])
@@ -142,8 +140,8 @@ destructuring properly (or at all); it only works for boring argument lists."
         m   (reduce #(assoc %1 (req->reqid (first %2)) (second %2)) {} r+e)]
     (ex-info "Error from request" m)))
 
-(defmacro call-reentrant [reqs] 
-  `(let [res# (<! (enqueue-reentrant ~reqs))]
+(defmacro call-reentrant [reqs nodeid reqchan] 
+  `(let [res# (<! (enqueue-reentrant ~reqs ~nodeid ~reqchan))]
      (if (some :error res#)
        (throw (ex-aggregate-errors ~reqs res#))
        (map :value res#))))
@@ -158,7 +156,7 @@ destructuring properly (or at all); it only works for boring argument lists."
         (if-not (:error res#) (:value res#)
                 (throw (ex-info "Error during grid execution" res#)))))
   ([form]
-     `(first (call-reentrant [~(vecify form)]))))
+     `(first (call-reentrant [~(vecify form)]  *nodeid* *reqchan*))))
 
 
 (defmacro requests 
@@ -169,7 +167,7 @@ destructuring properly (or at all); it only works for boring argument lists."
           (throw (ex-info "Error during grid execution" {:errors errs#}))
           (map :value res#))))
   ([reqs]
-     `(call-reentrant ~reqs)))
+     `(call-reentrant ~reqs *nodeid* *reqchan*)))
 
 
 ;(defmacro req [form] (apply vector form))
