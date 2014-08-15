@@ -26,7 +26,7 @@
 (cdefn recbog [msec jobnum reclevel numrecjobs args]
   (let [_ (debug "here we are in recbog")
         reqs (map #(vector recbog msec % (dec reclevel)  numrecjobs args) (range reclevel))
-        vs  (call-reentrant reqs)]
+        vs  (requests reqs)]
     (Thread/sleep msec)
     (str "RecBog:" *nodeid* ":" jobnum ":" msec ":" reclevel ":" args ":[" (clojure.string/join "," (map str vs)) "]")    ))
 
@@ -34,15 +34,15 @@
 (def poolctl (launch-distributor "pool"))
 (def w1ctl (launch-worker "w1" "pool"))
 (def w2ctl (launch-worker "w2" "pool"))
-;(def helperctl (launch-helper "pool" 1000))
+(def helperctl (launch-helper "pool" 10000))
 
 (comment
   (def c (async/map vector (map #(enqueue "w1" [bogosity 10000 % 113]) (range 50))))
   (def c (async/map vector (map #(enqueue "pool" [bogosity 2 % 111]) (range 5))))
   (def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 111]) (range 1))))
   (def c (async/map vector (map #(enqueue "pool" [recbog 1 % 1 5 111]) (range 1))))
-  (def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 211]) (range 10))))
-  (def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 211]) (range 50))))
+  (def c (async/map vector (map #(enqueue "pool" [recbog 1 % 3 5 222]) (range 10))))
+  (def c (async/map vector (map #(enqueue "pool" [recbog 10 % 0 5 211]) (range 50))))
  )
 
 

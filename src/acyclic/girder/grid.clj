@@ -15,10 +15,10 @@
 
 (def back-end (atom nil))
 
-(def ^:dynamic *nodeid*)
-(def ^:dynamic *reqchan*)
-(def ^:dynamic *current-req*)
-(def ^:dynamic *current-reqid*)
+(def ^:dynamic *nodeid* nil)
+(def ^:dynamic *reqchan* nil)
+(def ^:dynamic *current-req* nil)
+(def ^:dynamic *current-reqid* nil)
 ;(def ^:dynamic *trail* ())
 
 (defn req->reqid [[f & args]]
@@ -111,10 +111,6 @@ destructuring properly (or at all); it only works for boring argument lists."
                   (fn [[s _]] (= s :done))
                   (fn [[_ v]] v)))
 
-(defn benqueue [nodeid req]
-  (<!! (enqueue nodeid req)))
-
-
 (defn enqueue-reentrant
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
   [reqs]
@@ -151,6 +147,30 @@ destructuring properly (or at all); it only works for boring argument lists."
      (if (some :error res#)
        (throw (ex-aggregate-errors ~reqs res#))
        (map :value res#))))
+
+
+(defn- vecify [form] (if (list? form) (vec form) form))
+
+(defmacro request 
+  ([nodeid form]
+     `(let [req# ~(vecify form)
+            res#  (<!! (enqueue ~nodeid req#))]
+        (if-not (:error res#) (:value res#)
+                (throw (ex-info "Error during grid execution" res#)))))
+  ([form]
+     `(first (call-reentrant [~(vecify form)]))))
+
+
+(defmacro requests 
+  ([nodeid reqs]
+     `(let [res#  (<!! (async/map vector (map #(enqueue ~nodeid %) ~reqs)))
+            errs# (filter :error res#)]
+        (if (seq errs#)
+          (throw (ex-info "Error during grid execution" {:errors errs#}))
+          (map :value res#))))
+  ([reqs]
+     `(call-reentrant ~reqs)))
+
 
 ;(defmacro req [form] (apply vector form))
 ;(defmacro reqs [& forms] (vec  (map #(apply vector %) forms)))
