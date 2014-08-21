@@ -32,7 +32,7 @@
   (let [_ (debug "here we are in recbog")
         reqs (map #(recbog msec % (dec reclevel)  numrecjobs args) (range reclevel))
         _   (debug "recbog asking for" reqs)
-        vs  (grid/call-reentrant reqs)]
+        vs  (grid/requests reqs)]
     (Thread/sleep msec)
     (str "RecBog:" grid/*nodeid* ":" jobnum ":" msec ":" reclevel ":" args ":[" (clojure.string/join "," (map str vs)) "]")    ))
 

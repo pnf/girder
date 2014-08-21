@@ -12,6 +12,9 @@
 (acyclic.girder.grid.redis/init!)
 (cleanup)
 
+(cdefn divide [x y] (float (/ x y)))
+(cdefn ratio [i] (request (divide i (dec i))))
+
 
 (cdefn bogosity [msec jobnum args]
   (Thread/sleep msec)
@@ -28,7 +31,7 @@
 (def poolctl (launch-distributor "pool"))
 (def w1ctl (launch-worker "w1" "pool"))
 (def w2ctl (launch-worker "w2" "pool"))
-(def helperctl (launch-helper "pool" 10000))
+;(def helperctl (launch-helper "pool" 10000))
 
 (comment
   (def c (async/map vector (map #(enqueue "w1" [bogosity 10000 % 113]) (range 50))))
@@ -36,8 +39,14 @@
   (def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 111]) (range 1))))
   (def c (async/map vector (map #(enqueue "pool" [recbog 1 % 1 5 111]) (range 1))))
   (def c (async/map vector (map #(enqueue "pool" [recbog 1 % 3 5 222]) (range 10))))
+  (requests "pool" (map #(vector recbog 1 % 3 5 222) (range 10))  )
   (def c (async/map vector (map #(enqueue "pool" [recbog 10 % 0 5 211]) (range 50))))
- )
+ 
+(load-file "src/acyclic/girder/testutils/grid.clj")
+(ns acyclic.girder.testscripts.boffo)
+(load-file "src/acyclic/girder/testscripts/boffo.clj")
+
+)
 
 
 

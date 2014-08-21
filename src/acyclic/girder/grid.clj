@@ -3,6 +3,7 @@
         acyclic.girder.grid.async)
   (:require  digest
              [acyclic.utils.log :as ulog]
+             [clojure.core.cache :as cache]
              [clj-time.core :as ct]
              [clj-time.coerce :as co]
              [taoensso.timbre :as timbre]
@@ -15,9 +16,11 @@
 
 (def back-end (atom nil))
 
+(def ^:dynamic *enqueue-external-after-msec* 10)
+
+
 (def ^:dynamic *nodeid* nil)
 (def ^:dynamic *reqchan* nil)
-(def ^:dynamic *current-req* nil)
 (def ^:dynamic *current-reqid* nil)
 ;(def ^:dynamic *trail* ())
 
@@ -44,11 +47,9 @@
 
 
 (defn reqid->req [reqid]
-  (let [[f & args]  (read-string reqid)
+  (let [[f & args]  (if (sequential? reqid) reqid (read-string reqid))
         f           (resolve (symbol f))
-        g           (:girded (meta f))
-        _           (debug "Girded=" g)
-        f           (if g f (cfn f))]
+        f           (if (:girded (meta f)) f (cfn f))]
     (apply vector f args)))
 
 
@@ -68,40 +69,77 @@ destructuring properly (or at all); it only works for boring argument lists."
        (close! c#))
      c#)))
 
+
+
   ;; State can be nil, :running or :done
   ;; Don't be paranoid about duplicates.  Worst that can happen is a multiple publish.
   ;; Even over-writing a done with a :running is OK, since nobody is supposed to read state directly.
   ;; A result will be a map keyed by :value &| :error.
+(def local-cache (atom (cache/soft-cache-factory {})))
 (defn- process-reqid [nodeid reqchan reqid]
     (let [c           (lchan #(str "process-reqid" nodeid reqid))
-          [state val] (get-val  @back-end reqid :state)]
-      (go (binding [*nodeid*  nodeid
-                    *reqchan* reqchan]
-            (>! c
-                (condp = state
-                  :running          (do  (debug "process-reqid" reqid "already running" val) :running)
-                  :done             (do (debug "process-reqid" reqid "already done" val)
-                                        (kv-publish @back-end reqid val)
-                                        :done)
-                  nil               (let [state1     (set-val @back-end reqid :state [:running nodeid])
-                                          _          (debug "process-reqid" reqid state1 "->" :running)
-                                          req        (reqid->req reqid)
-                                          _          (debug "req=" req)
-                                          [f & args] req
-                                          _          (debug "meta f" (meta f))
-                                          cres       (binding [*current-req*   req
-                                                               *current-reqid* reqid]
-                                                       (try (apply f args)
-                                                            (catch Exception e {:error (ulog/stack-trace e)})))
-                                          res        (<! cres)
-                                          _          (close! cres) ;; to be careful
-                                          state2     (set-val @back-end reqid :state [:done res])
-                                          _          (debug "process-reqid" reqid state1 "->" state2 "->" :done res)]
-                                      (kv-publish @back-end reqid res)
-                                      :running))))
-          (close! c))
+          res         (get @local-cache reqid)]
+      (go 
+        #_(when res (do  (>! c res) (close! res)))
+        (let [[state val] (get-val  @back-end reqid :state)]
+             (condp = state
+               :running          (do 
+                                   (debug "process-reqid" reqid "already running" val) :running)
+               :done             (do (debug "process-reqid" reqid "already done" val)
+                                     (kv-publish @back-end reqid val)
+                                     :done)
+               nil               (let [state1     (set-val @back-end reqid :state [:running nodeid])
+                                       _          (debug "process-reqid" reqid state1 "->" :running)
+                                       req        (reqid->req reqid)
+                                       _          (debug "req=" req)
+                                       [f & args] req
+                                       _          (debug "meta f" (meta f))
+                                       cres       (binding [*nodeid*        nodeid
+                                                            *reqchan*       reqchan
+                                                            *current-reqid* reqid] (apply f args))
+                                       res        (<! cres)
+                                       _          (close! cres) ;; to be careful
+                                       _          (>! c res)
+                                       _          (swap! local-cache #(assoc % reqid res))
+                                       state2     (set-val @back-end reqid :state [:done res])
+                                       _          (debug "process-reqid" reqid state1 "->" state2 "->" :done res)]
+                                   (kv-publish @back-end reqid res))))
+        (close! c))
       c))
 
+
+#_(defn- process-reqid [nodeid reqchan reqid]
+    (let [c           (lchan #(str "process-reqid" nodeid reqid))
+          res         (get @local-cache reqid)]
+      (go 
+        (if res
+          (do  (>! c res) (close! res)
+               (kv-publish @back-end reqid res))
+          (let [state val] (get-val  @back-end reqid :state) 
+               (condp = state
+                 :running          (do 
+                                     (debug "process-reqid" reqid "already running" val) :running)
+                 :done             (do (debug "process-reqid" reqid "already done" val)
+                                       (kv-publish @back-end reqid val)
+                                       :done)
+                 nil               (let [state1     (set-val @back-end reqid :state [:running nodeid])
+                                         _          (debug "process-reqid" reqid state1 "->" :running)
+                                         req        (reqid->req reqid)
+                                         _          (debug "req=" req)
+                                         [f & args] req
+                                         _          (debug "meta f" (meta f))
+                                         cres       (binding [*nodeid*        nodeid
+                                                              *reqchan*       reqchan
+                                                              *current-reqid* reqid] (apply f args))
+                                         res        (<! cres)
+                                         _          (close! cres) ;; to be careful
+                                         _          (>! c res)
+                                         _          (swap! local-cache #(assoc % reqid res))
+                                         state2     (set-val @back-end reqid :state [:done res])
+                                         _          (debug "process-reqid" reqid state1 "->" state2 "->" :done res)]
+                                     (kv-publish @back-end reqid res)))))
+        (close! c))
+      c))
 
 (defn enqueue [nodeid req]
   (enqueue-listen @back-end
@@ -118,8 +156,10 @@ destructuring properly (or at all); it only works for boring argument lists."
     (debug "enqueue-reentrant" nodeid reqs)
     (go 
       (if-not (seq reqs) (>! out [])
-              (let [results   (async/map vector (map #(enqueue nodeid %) reqs))
-                    results   (log-chan #(str "internal reentrant results:") results)]
+              (let [locreq    (chan)
+                    _         (async/onto-chan locreq reqs)
+                    results   (async/map vector (map #(enqueue nodeid %) reqs))
+                    results   (log-chan #(str "internal reentrant results:") results)] 
                 (async/go-loop []
                   (let [[v c] (async/alts! [results reqchan])]
                     (if (= c results)
