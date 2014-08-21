@@ -71,7 +71,6 @@
           (doseq [[qkey queue-type] (partition 2 qkeys-qtypes)]
             (car/del (queue-bak-key qkey queue-type)))))
 
-  ;; Can we make this resiliant by 
   (crpop [this key queue-type]
     (let [qkey   (queue-key key queue-type)
           bkey  (queue-bak-key key queue-type)
@@ -110,18 +109,11 @@
   (get-members [this key set-type]
     (wcar (:redis this) (car/smembers (set-key key set-type))))
 
-  #_(kv-listen [kvl k]
-    (let [c   (lchan (pr-str kvl k))
-          pu  (:publisher kvl)]
-      (debug "Subscribing on" pu "for" k)
-      (async/sub pu k c)
-      (async/map second [c])))
 
   (kv-listen [this k]
     (let [{{a :publisher
             l :listener} :kvl} this
             c (lchan (str "kv-listen" k))]
-      ;(debug "Here we are in kv-listen" a l c)
       (swap! a (fn [cmap] (assoc-in cmap [k c] 1)))
       c))
 
@@ -135,37 +127,6 @@
     (let [{redis  :redis
            {listener :listener} :kvl} this]
       (wcar redis (car/close-listener listener))))
-
-  #_(enqueue-listen
-    [this
-     nodeid reqid
-     queue-type val-type
-     enqueue-pred done-pred done-extract]
-    (trace "enqeueue-listen at " nodeid " received: " reqid)
-    ;; nested wcar - supposed to keep same connection
-    (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid)
-      qkey (queue-key nodeid queue-type)
-      vkey (val-key reqid val-type)
-      c    (kv-listen this reqid)]
-      (car/atomic redis 1
-       (let [_    (car/watch vkey)
-             v    (car/get vkey)
-             _     (trace "enqeueue-listen at" nodeid "found state of" reqid "=" v c)]
-         (cond
-          (done-pred v)  (let [v (done-extract v)]
-                           (trace "enqeue-listen" reqid "already done, publishing" v)
-                           (go (>! c v) (close! c)))
-          ;; If the following transaction fails, state must of changed to :running
-          ;; or :done, in which case someone else has or will soon have published
-          ;; the result.
-          (enqueue-pred v) (let [r     (do (car/multi)
-                                           (car/lpush qkey reqid)
-                                           (car/exec))]
-                             (trace "enqueue-listen enqueueing" reqid r))
-          :else           (trace "enqeue-listen" reqid "state already" v))
-         (car/unwatch)
-         ))
-      c))
 
 (enqueue-listen
     [this
@@ -186,6 +147,7 @@
          (cond
           (done-pred v)  (let [v (done-extract v)]
                            (trace "enqeue-listen" reqid "already done, publishing" v)
+                           ;; TODO: should we remove the channel from the listener atom?
                            (go (>! c v) (close! c)))
           (enqueue-pred v) (let [r (protocol/with-replies* ; wcar redis  ;; will fail if vkey has been messed with.
                                          (car/multi)
