@@ -3,6 +3,7 @@
               :refer [<! >! <!! >!! timeout chan alt!! go close!]]
             [taoensso.timbre :as timbre]
             [acyclic.utils.log :as ulog]
+            [clojure.core.cache :as cache]
             [clojure.core.async.impl.protocols :as pimpl :refer [Buffer]]))
 (timbre/refer-timbre)
 
@@ -15,7 +16,7 @@
   (remove! [this]
     (trace name "remove!")
     (let [v (.remove! buf)]
-      (trace name "removed" v)
+      (trace name "removed" (pr-str v))
       v))
   (add! [this item]
     (trace name "adding" (pr-str item))
@@ -34,7 +35,19 @@
 (defn close-all! [& cs] (doall (map async/close! cs)))
 
 
-(def lchans (atom {}))
+(def lchans (atom (cache/soft-cache-factory {})))
+
+#_(defn lchan [name & [buf]]
+  (if-not (timbre/level-sufficient? :trace nil)
+    (chan buf)
+    (let [name (if (fn? name) (name) name)
+          buf  (or buf 1)
+          buf  (if (number? buf) (async/buffer buf) buf)
+          buf (->LoggingBuffer name buf)
+          c    (chan buf)]
+      (trace "Channel" name "created:" c)
+      (swap! lchans #(assoc % c name))
+      c)))
 
 (defn lchan [name & [buf]]
   (if-not (timbre/level-sufficient? :trace nil) (chan buf)
@@ -74,8 +87,9 @@
               (recur)))))
     ctl))
 
-(def  lchans-cleanup-channel (atom nil))
-(defn lchans-start-cleanup []
+(def lchans-cleanup-channel (atom nil))
+
+#_(defn lchans-start-cleanup []
   (swap! lchans-cleanup-channel #(or % (lchans-cleaner 1000))))
 
 (defn lchans-close-all []
