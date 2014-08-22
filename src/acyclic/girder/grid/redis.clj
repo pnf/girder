@@ -109,11 +109,10 @@
   (get-members [this key set-type]
     (wcar (:redis this) (car/smembers (set-key key set-type))))
 
-
-  (kv-listen [this k]
+  (kv-listen [this k deb]
     (let [{{a :subs
             l :listener} :kvl} this
-            c (lchan (str "kv-listen" k))]
+            c (lchan (str "kv-listen-" k "-" deb))]
       (swap! a assoc-in [k c] 1)
       c))
 
@@ -121,8 +120,7 @@
     (let [{redis :redis
            {topic :topic
             a     :subs} :kvl} this]
-      (go (doseq [c (keys (get @a k))] (>! c v) (close! c))
-          (swap! a dissoc k))
+;      (go (doseq [c (keys (get @a k))] (>! c v) (close! c))          (swap! a dissoc k))
       (wcar redis
             (car/publish topic [k v]))))
 
@@ -135,13 +133,13 @@
     [this
      nodeid reqid
      queue-type val-type
-     enqueue-pred done-pred done-extract]
+     enqueue-pred done-pred done-extract deb]
     (trace "enqeueue-listen at " nodeid " received: " reqid)
     ;; nested wcar - supposed to keep same connection
   (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid)  ;  :single-conn true
       qkey (queue-key nodeid queue-type)
       vkey (val-key reqid val-type)
-      c    (kv-listen this reqid)]
+      c    (kv-listen this reqid deb)]
       (wcar redis
        (let [v  (second (protocol/with-replies* ; wcar redis  ;
                           (car/watch vkey)
@@ -151,7 +149,7 @@
           (done-pred v)  (let [v (done-extract v)]
                            (trace "enqeue-listen" reqid "already done, publishing" v)
                            ;; TODO: should we remove the channel from the listener atom?
-                           (go (>! c v) (close! c)))
+                           (go (>! c v) #_(close! c)))
           (enqueue-pred v) (let [r (protocol/with-replies* ; wcar redis  ;; will fail if vkey has been messed with.
                                          (car/multi)
                                          (car/lpush qkey reqid)
@@ -187,8 +185,8 @@
                                  (trace "kv-message-cb k=" (pr-str k) "v=" (pr-str v))
                                  (swap! a (fn [cmap]
                                             ;; Notify all channels subscribed to this topic and close them.
-                                            (trace "kv-message-cb publishing" v "to" (keys (get cmap k)))
-                                            (doseq [c (keys (get cmap k))] (go (>! c v) (close! c)))
+                                            (trace "kv-message-cb publishing" k v "to" (keys (get cmap k)))
+                                            (doseq [c (keys (get cmap k))] (go (>! c v) #_(close! c)))
                                             (dissoc cmap k))))))
         redis-listener     (car/with-new-pubsub-listener
                              (:spec redis)

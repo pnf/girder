@@ -20,12 +20,21 @@
   (Thread/sleep msec)
   (str "Bogosity:" *nodeid* ":" jobnum ":" msec ":" args))
 
+
 (cdefn recbog [msec jobnum reclevel numrecjobs args]
-  (let [_ (debug "here we are in recbog")
-        reqs (map #(vector recbog msec % (dec reclevel)  numrecjobs args) (range reclevel))
-        vs  (requests reqs)]
-    (Thread/sleep msec)
-    (str "RecBog:" *nodeid* ":" jobnum ":" msec ":" reclevel ":" args ":[" (clojure.string/join "," (map str vs)) "]")    ))
+       (debug "here we are in recbog" *nodeid* msec jobnum reclevel numrecjobs args)
+       (if-not (pos? reclevel)
+         (let [res (str jobnum)]
+           (Thread/sleep msec)
+           (debug "recbog" msec jobnum reclevel numrecjobs args "returning" res)
+           res)
+         (let [reqs (map #(vector recbog msec % (dec reclevel) numrecjobs args) (range numrecjobs))
+               vs  (requests reqs)
+               res (str "RecBog:" *nodeid* ":" jobnum ":" msec ":" reclevel ":" args ":[" (clojure.string/join "," (map str vs)) "]")]
+           (debug "recbog" msec jobnum reclevel numrecjobs args "returning" res)
+           (Thread/sleep msec)
+           res
+    )))
 
 
 (def poolctl (launch-distributor "pool"))
@@ -41,7 +50,7 @@
   (def c (async/map vector (map #(enqueue "pool" [recbog 1 % 3 5 222]) (range 10))))
   (requests "pool" (map #(vector recbog 1 % 3 5 222) (range 10))  )
   (def c (async/map vector (map #(enqueue "pool" [recbog 10 % 0 5 211]) (range 50))))
- 
+
 (load-file "src/acyclic/girder/testutils/grid.clj")
 (ns acyclic.girder.testscripts.boffo)
 (load-file "src/acyclic/girder/testscripts/boffo.clj")

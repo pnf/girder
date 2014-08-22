@@ -24,6 +24,8 @@
 (def ^:dynamic *current-reqid* nil)
 ;(def ^:dynamic *trail* ())
 
+(def iida (atom 0))
+
 
 (defn ->reqid [req]
   (if (string? req)
@@ -46,7 +48,7 @@
                   {:value (apply f args)}
                   (catch Exception e
                     {:error (format-exception e)})))
-          (close! c))
+          #_(close! c))
       c)))
 
 
@@ -84,46 +86,44 @@ destructuring properly (or at all); it only works for boring argument lists."
   ;; A result will be a map keyed by :value &| :error.
 (def local-cache (atom (cache/soft-cache-factory {})))
 (defn- process-reqid [nodeid reqchan req-or-id]
-  (let [[req reqid] (req+id req-or-id)
-        c           (lchan #(str "process-reqid" nodeid reqid))
+  (let [id          (str "ID" (swap! iida inc))
+        [req reqid] (req+id req-or-id)
+        c           (lchan #(str "process-reqid" id nodeid reqid))
         res         (get @local-cache reqid)]
     (go 
       (if res
         (do  
-          (debug "process-reqid found cached value for" reqid)
-          (>! c res)
-          (close! c)
+          (debug "process-reqid found cached value" id nodeid reqid)
+          (>! c [:cached res])
           (kv-publish @back-end reqid res))
         (let [[state val] (get-val  @back-end reqid :state)]
           (condp = state
             :running          (do 
-                                (debug "process-reqid" reqid "already running" val) :running)
-            :done             (do (debug "process-reqid" reqid "already done" val)
+                                (debug "process-reqid" id nodeid reqid "already running" val)
+                                (>! c [:running val]))
+            :done             (do (debug "process-reqid" id nodeid reqid "already done" val)
                                   (kv-publish @back-end reqid val)
-                                  :done)
+                                  (>! c [:done val]))
             nil               (let [state1     (set-val @back-end reqid :state [:running nodeid])
-                                    _          (debug "process-reqid" reqid state1 "->" :running)
+                                    _          (debug "process-reqid" id nodeid reqid state1 "->" :running)
                                     [f & args] req
-                                    _ (debug "****" f args req)
                                     cres       (binding [*nodeid*        nodeid
                                                          *reqchan*       reqchan
                                                          *current-reqid* (->reqid reqid)]
                                                  (apply f args))
                                     res        (<! cres)
-                                    _ (debug "****" f args req res)
                                     state2     (set-val @back-end reqid :state [:done res])]
-                                (close! cres)
-                                (>! c res)
-                                (close! c)
+                                #_(close! cres)
+                                (>! c [:calcd res])
+                                #_(close! c)
                                 (swap! local-cache assoc reqid res)
-                                (debug "process-reqid" reqid state1 "->" state2 "->" :done res)
-
+                                (debug "process-reqid" id nodeid reqid state1 "->" state2 "->" :done res)
                                 (kv-publish @back-end reqid res))))))
       
     c))
 
 
-(defn enqueue [nodeid req]
+(defn enqueue [nodeid req & [deb]]
   (if-let [res (get @local-cache (->reqid req))]
     (let [c (chan)]
       (debug "enqueue found cached value for" req)
@@ -134,36 +134,38 @@ destructuring properly (or at all); it only works for boring argument lists."
                     :requests :state
                     nil?
                     (fn [[s _]] (= s :done))
-                    (fn [[_ v]] v))))
+                    (fn [[_ v]] v)
+                    deb)))
+
 
 (defn enqueue-reentrant
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
   [reqs nodeid reqchan]
-  (let [out       (lchan #(str "enqeueue-reentrant results " reqs))]
-    (debug "enqueue-reentrant" nodeid reqs)
+  (let [id        (str "EQR" (swap! iida inc))
+        out       (lchan #(str "enqeueue-reentrant out" id nodeid))]
+    (debug "enqueue-reentrant" id nodeid  reqs)
     (go 
       (if-not (seq reqs) (>! out [])
               (let [locreqs   (chan)
                     _         (async/onto-chan locreqs (map ->reqid reqs) false)
-                    results   (async/map vector (map #(enqueue nodeid %) reqs))
-                    results   (log-chan #(str "internal reentrant results:") results)]
+                    results   (async/map vector (map #(enqueue nodeid % id) reqs))]
                 (async/go-loop []
-                  (let [[v c] (async/alts! [results reqchan])] ;  locreqs
+                  (let [[v c] (async/alts! [results locreqs reqchan]) ] ;   reqchan reqchan
                     (condp = c
                       results
                       (let [res v]
-                        (trace "enqueue-reentrant got final results: " res)
+                        (trace "enqueue-reentrant" id nodeid  "got final results: " res)
                         (>! out res)
-                        (close! c))
+                        #_(close! c))
                       reqchan
-                      (let [reqid v]
-                        (trace "enqueue-reentrant handling reqid from queue: " reqid)
-                        (<! (process-reqid nodeid reqchan reqid))
+                      (let [reqid v
+                            pres (<! (process-reqid nodeid reqchan reqid))]
+                        (trace "enqueue-reentrant" id nodeid "handling from queue: " reqid pres)
                         (recur))
                       locreqs
-                      (let [reqid v]
-                        (trace "enqueue-reentrant handling local req:" reqid)
-                        (<! (process-reqid nodeid reqchan reqid))
+                      (let [reqid v
+                            pres  (<! (process-reqid nodeid reqchan reqid))]
+                        (trace "enqueue-reentrant " id nodeid "handling locally" reqid pres)
                         (recur))))))))
     out))
 
@@ -298,7 +300,7 @@ destructuring properly (or at all); it only works for boring argument lists."
                          (close-all! reqs allreqs ctl))
          :else        (when reqid
                         (debug "Worker" nodeid " nodeid will now process" reqid)
-                        (set-val @back-end nodeid :busy true)
+                        (set-val @back-end nodeid :busy reqid)
                         (<! (process-reqid nodeid reqs reqid))
                         (recur false)))))
     ctl))
