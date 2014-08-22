@@ -23,7 +23,7 @@
 (defn vols-key [nodeid] (str "vol-queue-" nodeid))
 (defn val-key [reqid val-type ] (str (name val-type)  "-val-" reqid))
 
-(defrecord Redis-KV-Listener [topic publisher listener])
+(defrecord Redis-KV-Listener [topic subs listener])
 
 (defrecord Redis-Backend [redis kvl]
 
@@ -111,15 +111,18 @@
 
 
   (kv-listen [this k]
-    (let [{{a :publisher
+    (let [{{a :subs
             l :listener} :kvl} this
             c (lchan (str "kv-listen" k))]
-      (swap! a (fn [cmap] (assoc-in cmap [k c] 1)))
+      (swap! a assoc-in [k c] 1)
       c))
 
   (kv-publish [this k v]
     (let [{redis :redis
-           {topic :topic} :kvl} this]
+           {topic :topic
+            a     :subs} :kvl} this]
+      (go (doseq [c (keys (get @a k))] (>! c v) (close! c))
+          (swap! a dissoc k))
       (wcar redis
             (car/publish topic [k v]))))
 
@@ -165,7 +168,7 @@
 )
 
 
-;; In this version, the publisher field is actually a map atom containing
+;; In this version, the subs field is actually a map atom containing
 ;;     {reqid1    {chana 1
 ;;                 chanb 1}
 ;;      reqid2    {chanc 1
@@ -176,8 +179,8 @@
 ;; then remove from the map.
 
 (defn- kv-listener [redis topic]
-  (let [publisher          (atom {}) ;; { key {c1 r1, c2 r2}}
-        kv-message-cb      (fn [a [etype _ val :as msg]]
+  (let [subs          (atom {}) ;; { key {c1 r1, c2 r2}}
+        kv-message-cb  (fn [a [etype _ val :as msg]]
                              (trace "kv-message-cb message" (pr-str msg))
                              (when (and (= etype "message") (vector? val))
                                (let [[k v] val]
@@ -188,10 +191,10 @@
                                             (doseq [c (keys (get cmap k))] (go (>! c v) (close! c)))
                                             (dissoc cmap k))))))
         redis-listener     (car/with-new-pubsub-listener
-                                 (:spec redis)
-                                 {topic (partial kv-message-cb publisher)}
-                                 (car/subscribe topic))]
-        (->Redis-KV-Listener topic publisher redis-listener)))
+                             (:spec redis)
+                             {topic (partial kv-message-cb subs)}
+                             (car/subscribe topic))]
+    (->Redis-KV-Listener topic subs redis-listener)))
 
 
 (defn init!
