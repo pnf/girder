@@ -40,7 +40,7 @@
 (def poolctl (launch-distributor "pool"))
 (def w1ctl (launch-worker "w1" "pool"))
 (def w2ctl (launch-worker "w2" "pool"))
-;(def helperctl (launch-helper "pool" 10000))
+(def helperctl (launch-helper "pool" 1000))
 
 (comment
   (def c (async/map vector (map #(enqueue "w1" [bogosity 10000 % 113]) (range 50))))
