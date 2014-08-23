@@ -9,8 +9,7 @@
              [taoensso.timbre :as timbre]
              [ clojure.core.async :as async 
               :refer [<! >! <!! >!! timeout chan alt!! go close!]])
-  (:import [java.net InetAddress])
-)
+  (:import [java.net InetAddress]))
 (timbre/refer-timbre)
 ;;(timbre/set-level! :debug)
 
@@ -25,7 +24,6 @@
 ;(def ^:dynamic *trail* ())
 
 (def iida (atom 0))
-
 
 (defn ->reqid [req]
   (if (string? req)
