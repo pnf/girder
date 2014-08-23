@@ -137,34 +137,48 @@ destructuring properly (or at all); it only works for boring argument lists."
                     (fn [[_ v]] v)
                     deb)))
 
+(def where-state  (atom {}))
+(defn where [id & vs]
+  (when  (timbre/level-sufficient? :trace nil)
+    (if (seq vs)
+      (swap! where-state assoc id (pr-str vs))
+      (swap! where-state dissoc id))))
+
 
 (defn enqueue-reentrant
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
   [reqs nodeid reqchan]
   (let [id        (str "EQR" (swap! iida inc))
         out       (lchan #(str "enqeueue-reentrant out" id nodeid))]
-    (debug "enqueue-reentrant" id nodeid  reqs)
+    (debug "enqueue-reentrant" id nodeid reqs)
+    (where id 0)
     (go 
       (if-not (seq reqs) (>! out [])
               (let [locreqs   (chan)
                     _         (async/onto-chan locreqs (map ->reqid reqs) false)
                     results   (async/map vector (map #(enqueue nodeid % id) reqs))]
                 (async/go-loop []
-                  (let [[v c] (async/alts! [results locreqs reqchan]) ] ;   reqchan reqchan
+                  (where id "alts!")
+                  (let [[v c] (async/alts! [results reqchan]) ] ;   reqchan reqchan
                     (condp = c
                       results
                       (let [res v]
+                        (where id)
                         (trace "enqueue-reentrant" id nodeid  "got final results: " res)
                         (>! out res)
                         #_(close! c))
                       reqchan
                       (let [reqid v
+                            _ (where id "queue" reqid)
                             pres (<! (process-reqid nodeid reqchan reqid))]
+                        (where id "queue" reqid pres)
                         (trace "enqueue-reentrant" id nodeid "handling from queue: " reqid pres)
                         (recur))
                       locreqs
                       (let [reqid v
+                            _ (where id "local" reqid)
                             pres  (<! (process-reqid nodeid reqchan reqid))]
+                        (where id "local" reqid pres)
                         (trace "enqueue-reentrant " id nodeid "handling locally" reqid pres)
                         (recur))))))))
     out))
