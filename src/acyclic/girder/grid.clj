@@ -2,7 +2,7 @@
   (:use acyclic.girder.grid.back-end
         acyclic.girder.grid.async)
   (:require  digest
-             [acyclic.utils.log :as ulog]
+             [acyclic.utils.log :as ulog :refer [iid]]
              [clojure.core.cache :as cache]
              [clj-time.core :as ct]
              [clj-time.coerce :as co]
@@ -23,7 +23,6 @@
 (def ^:dynamic *current-reqid* nil)
 ;(def ^:dynamic *trail* ())
 
-(def iida (atom 0))
 
 (defn ->reqid [req]
   (if (string? req)
@@ -83,8 +82,8 @@ destructuring properly (or at all); it only works for boring argument lists."
   ;; Even over-writing a done with a :running is OK, since nobody is supposed to read state directly.
   ;; A result will be a map keyed by :value &| :error.
 (def local-cache (atom (cache/soft-cache-factory {})))
-(defn- process-reqid [nodeid reqchan req-or-id]
-  (let [id          (str "ID" (swap! iida inc))
+(defn- process-reqid [nodeid reqchan req-or-id & [deb]]
+  (let [id          (iid deb "PRQ")
         [req reqid] (req+id req-or-id)
         c           (lchan #(str "process-reqid" id nodeid reqid))
         res         (get @local-cache reqid)]
@@ -111,9 +110,7 @@ destructuring properly (or at all); it only works for boring argument lists."
                                                  (apply f args))
                                     res        (<! cres)
                                     state2     (set-val @back-end reqid :state [:done res])]
-                                #_(close! cres)
                                 (>! c [:calcd res])
-                                #_(close! c)
                                 (swap! local-cache assoc reqid res)
                                 (debug "process-reqid" id nodeid reqid state1 "->" state2 "->" :done res)
                                 (kv-publish @back-end reqid res))))))
@@ -122,18 +119,20 @@ destructuring properly (or at all); it only works for boring argument lists."
 
 
 (defn enqueue [nodeid req & [deb]]
-  (if-let [res (get @local-cache (->reqid req))]
-    (let [c (chan)]
-      (debug "enqueue found cached value for" req)
-      (go (>! c res))
-      c)
-    (enqueue-listen @back-end
-                    nodeid (->reqid req)
-                    :requests :state
-                    nil?
-                    (fn [[s _]] (= s :done))
-                    (fn [[_ v]] v)
-                    deb)))
+  (let [id  (iid deb "ENQ")
+        res (get @local-cache (->reqid req))]
+    (if res
+      (let [c   (chan)]
+        (debug "enqueue" id " found cached value for" req)
+        (go (>! c res))
+        c)
+      (enqueue-listen @back-end
+                      nodeid (->reqid req)
+                      :requests :state
+                      nil?
+                      (fn [[s _]] (= s :done))
+                      (fn [[_ v]] v)
+                      id))))
 
 (def where-state  (atom {}))
 (defn where [id & vs]
@@ -146,7 +145,7 @@ destructuring properly (or at all); it only works for boring argument lists."
 (defn enqueue-reentrant
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
   [reqs nodeid reqchan]
-  (let [id        (str "EQR" (swap! iida inc))
+  (let [id        (iid "EQR")
         out       (lchan #(str "enqeueue-reentrant out" id nodeid))]
     (debug "enqueue-reentrant" id nodeid reqs)
     (where id 0)
@@ -168,14 +167,14 @@ destructuring properly (or at all); it only works for boring argument lists."
                       reqchan
                       (let [reqid v
                             _ (where id "queue" reqid)
-                            pres (<! (process-reqid nodeid reqchan reqid))]
+                            pres (<! (process-reqid nodeid reqchan reqid id))]
                         (where id "queue" reqid pres)
                         (trace "enqueue-reentrant" id nodeid "handling from queue: " reqid pres)
                         (recur))
                       locreqs
                       (let [reqid v
                             _ (where id "local" reqid)
-                            pres  (<! (process-reqid nodeid reqchan reqid))]
+                            pres  (<! (process-reqid nodeid reqchan reqid id))]
                         (where id "local" reqid pres)
                         (trace "enqueue-reentrant " id nodeid "handling locally" reqid pres)
                         (recur))))))))
@@ -313,7 +312,7 @@ destructuring properly (or at all); it only works for boring argument lists."
          :else        (when reqid
                         (debug "Worker" nodeid " nodeid will now process" reqid)
                         (set-val @back-end nodeid :busy reqid)
-                        (<! (process-reqid nodeid reqs reqid))
+                        (<! (process-reqid nodeid reqs reqid nodeid))
                         (recur false)))))
     ctl))
 
@@ -341,40 +340,3 @@ destructuring properly (or at all); it only works for boring argument lists."
     ctl))
 
 (defn cleanup [] (clean-all @back-end))
-
-
-
-;; (def topology ["commons" 0
-;;                ["group1" 1000 ["worker1a" 100] ["worker1b" 100]]
-;;                ["group2" ["worker2a" 100] ["worker2b" 100]]])
-
-;; (defn add-member [[node migration-time & members] parent]
-;;   (prn node migration-time members parent)
-;;   (wcar*  (car/hset "queue-parents" node parent)
-;;           (car/hset "queue-migration-times" node migration-time)
-;;           (car/del (str "queue-" node)))
-;;   (doseq [m members] (add-member m node)))
-
-;; (defn define-toplogy [topo]
-;;   (wcar* (car/del "queue-parents" "queue-migration-times"))
-;;   (add-member topo "-"))
-
-
-;; (defn enqueue-many [node reqids] (async/merge (map (partial enqueue) reqids)))
-
-
-
-
-;; (defn test []
-;;   (let [c  (chan)
-;;         m  (async/mult c)
-;;         c1 (chan)
-;;         c2 (chan)]
-;;     (async/tap m c1)
-;;     (async/tap m c2)
-
-;;     (go (debug "c2" (<! c2)))
-;;     ;(go (>! c "yipee"))
-;;     (close! c)
-;;     ))
-
