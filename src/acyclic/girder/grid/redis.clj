@@ -21,7 +21,11 @@
 (defn queue-bak-key [nodeid queue-type] (str (name queue-type) "-queue-bak-" nodeid))
 (defn set-key [nodeid set-type] (str (name set-type) "-set-" nodeid))
 (defn vols-key [nodeid] (str "vol-queue-" nodeid))
-(defn val-key [reqid val-type ] (str (name val-type)  "-val-" reqid))
+#_(defn val-key [reqid val-type] (str (name val-type)  "-val-" reqid))
+
+(defn val-key [reqid val-type] 
+  (let [k (str (name val-type)  "-val-" reqid)]
+    (if (< (.length k) 32) k (digest/md5 k))))
 
 (defrecord Redis-KV-Listener [topic subs listener])
 
