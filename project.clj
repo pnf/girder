@@ -1,6 +1,6 @@
 (defproject acyclic/girder "0.1.0-SNAPSHOT"
   :author "Peter Fraenkel <http://podsnap.com>"
-  :description "Distributed re-entrnt grid"
+  :description "Distributed re-entrant grid"
   :url "http://github.com/pnf/girder"
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
@@ -11,8 +11,10 @@
                  [clj-time "0.7.0"]
                  [amazonica "0.2.16"]
                  [clj-ssh "0.5.10"]
-                 [org.clojure/core.cache "0.6.4"]
-                 [org.clojure/core.async "0.1.303.0-886421-alpha"]
+                 [org.clojure/core.async "0.1.303.0-886421-alpha"
+                  :exclusions [[org.clojure/core.cache]]]
+                 ;[org.clojure/core.cache "0.6.5"]
+                 [core.cache "0.6.5-pnf-SNAPSHOT"]
                  [com.taoensso/timbre "3.2.0"]
                  [acyclic/utils "0.1.0-SNAPSHOT"]
                  [acyclic/awstools "0.1.0-SNAPSHOT"]

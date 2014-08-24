@@ -34,8 +34,7 @@
 
 (defn close-all! [& cs] (doall (map async/close! cs)))
 
-
-(def lchans (atom (cache/soft-cache-factory {})))
+(def lchans (atom (cache/weak-cache-factory {})))
 
 #_(defn lchan [name & [buf]]
   (if-not (timbre/level-sufficient? :trace nil)
