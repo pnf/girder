@@ -45,7 +45,7 @@
           buf (->LoggingBuffer name buf)
           c    (chan buf)]
       (trace "Channel" name "created:" c)
-      (swap! lchans #(assoc % c name))
+      (swap! lchans #(assoc % name c))
       c)))
 
 (defn lchan [name & [buf]]
@@ -54,7 +54,7 @@
                 c    (async/map> #(do (trace "Channel" name "receiving" %) %)
                                  (async/map< #(do (trace "Channel" name "delivering" %) %) (chan buf)))]
             (trace "Channel" name "created:" c)
-            (swap! lchans #(assoc % c name))
+            (swap! lchans #(assoc % name c))
             c)))
 
 (defn log-chan
@@ -65,38 +65,13 @@
                 c2 (async/map> #(do (trace "Channel" name "receiving" %) %)
                               (async/map< #(do (trace "Channel" name "delivering" %) %) c))]
             (trace "Channel" name "created:" c2 "logging" c)
-            (swap! lchans #(assoc % c2 name))
+            (swap! lchans #(assoc % name c2))
             c2)))
 
-(defn- remove-if-closed [m c]
-  (if-not (closed? c) m
-          (do 
-            (trace "Channel closed" (get m c) c)
-            (dissoc m c))))
-
-(defn lchans-cleaner [msec]
-  (trace "Starting up lchans cleanup loop")
-  (let [ctl (chan)]
-    (async/go-loop []
-      (let [t     (async/timeout msec)
-            [v c] (async/alts! [ctl t])]
-        (if (= c ctl)
-          (trace "Shutting down lchans cleanup loop")
-          (do (swap! lchans (fn [m] (reduce remove-if-closed m (keys m))))
-              (recur)))))
-    ctl))
-
-(def lchans-cleanup-channel (atom nil))
-
-#_(defn lchans-start-cleanup []
-  (swap! lchans-cleanup-channel #(or % (lchans-cleaner 1000))))
 
 (defn lchans-close-all []
-  (swap! lchans-cleanup-channel (fn [c] (when c (async/close! c)) nil))
   (swap! lchans
         (fn [m]
-          (doseq [c (keys m)] 
-            (async/close! c)
-            )
-          {})))
-
+          (doseq [c (vals m)] 
+            (async/close! c))
+          (cache/weak-cache-factory))))
