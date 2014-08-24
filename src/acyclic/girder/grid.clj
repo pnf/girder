@@ -129,9 +129,9 @@ destructuring properly (or at all); it only works for boring argument lists."
       (enqueue-listen @back-end
                       nodeid (->reqid req)
                       :requests :state
-                      nil?
-                      (fn [[s _]] (= s :done))
-                      (fn [[_ v]] v)
+                      (fn do-enqueue? [v]       (nil? v))
+                      (fn done?       [ [s _] ] (= s :done))
+                      (fn extract     [ [_ v] ] v)
                       id))))
 
 (def where-state  (atom {}))
@@ -156,7 +156,7 @@ destructuring properly (or at all); it only works for boring argument lists."
                     results   (async/map vector (map #(enqueue nodeid % id) reqs))]
                 (async/go-loop []
                   (where id "alts!")
-                  (let [[v c] (async/alts! [results reqchan]) ] ;   reqchan reqchan
+                  (let [[v c] (async/alts! [results reqchan]) ]
                     (condp = c
                       results
                       (let [res v]
@@ -170,13 +170,6 @@ destructuring properly (or at all); it only works for boring argument lists."
                             pres (<! (process-reqid nodeid reqchan reqid id))]
                         (where id "queue" reqid pres)
                         (trace "enqueue-reentrant" id nodeid "handling from queue: " reqid pres)
-                        (recur))
-                      locreqs
-                      (let [reqid v
-                            _ (where id "local" reqid)
-                            pres  (<! (process-reqid nodeid reqchan reqid id))]
-                        (where id "local" reqid pres)
-                        (trace "enqueue-reentrant " id nodeid "handling locally" reqid pres)
                         (recur))))))))
     out))
 
