@@ -116,7 +116,7 @@
   (kv-listen [this k deb]
     (let [{{a :subs
             l :listener} :kvl} this
-            c (lchan (str "kv-listen-" k "-" deb))]
+            c (lchan (str "kv-listen-" k "-" deb) (async/dropping-buffer 1))]
       (swap! a assoc-in [k c] 1)
       c))
 
@@ -139,7 +139,7 @@
      nodeid reqid
      queue-type val-type
      enqueue-pred done-pred done-extract deb]
-    (trace "enqeueue-listen at " nodeid " received: " reqid)
+    (trace "enqueue-listen at " nodeid " received: " reqid)
     ;; nested wcar - supposed to keep same connection
   (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid)  ;  :single-conn true
       qkey (queue-key nodeid queue-type)
@@ -149,17 +149,17 @@
        (let [v  (second (protocol/with-replies* ; wcar redis  ;
                           (car/watch vkey)
                           (car/get vkey)))
-             _     (trace "enqeueue-listen at" nodeid "found state of" reqid "=" v c)]
+             _     (trace "enqueue-listen at" nodeid "found state of" reqid "=" v c)]
          (cond
           (done-pred v)  (let [v (done-extract v)]
-                           (trace "enqeue-listen" reqid "already done, publishing" v)
+                           (trace "enqueue-listen" reqid "already done, publishing" v)
                            (go (>! c v) (close! c)))
           (enqueue-pred v) (let [r (protocol/with-replies* ; wcar redis  ;; will fail if vkey has been messed with.
                                          (car/multi)
                                          (car/lpush qkey reqid)
                                          (car/exec))]
                              (trace "enqueue-listen enqueueing" reqid r))
-          :else           (trace "enqeue-listen" reqid "state already" v))
+          :else           (trace "enqueue-listen" reqid "state already" v))
          (car/unwatch)))
       c))
 
