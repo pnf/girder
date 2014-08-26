@@ -204,5 +204,5 @@
      (let [redis   {:pool {}
                     :spec {:host host :port port}}
            kvl     (kv-listener redis "CALCS")]
-       (reset! acyclic.girder.grid/back-end (->Redis-Backend redis kvl))))
+       (alter-var-root (var acyclic.girder.grid/back-end) #(do % (->Redis-Backend redis kvl)))))
   ([] (init! "localhost" 6379)))
