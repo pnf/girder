@@ -3,7 +3,7 @@
               :refer [<! >! <!! >!! timeout chan alt!! go close!]]
             [taoensso.timbre :as timbre]
             [acyclic.utils.log :as ulog]
-            [clojure.core.cache :as cache]
+            [acyclic.girder.grid.cache :as cache]
             [clojure.core.async.impl.protocols :as pimpl :refer [Buffer]]))
 (timbre/refer-timbre)
 
@@ -74,4 +74,4 @@
         (fn [m]
           (doseq [c (vals m)] 
             (async/close! c))
-          (cache/weak-cache-factory))))
+          (cache/weak-cache-factory {}))))
