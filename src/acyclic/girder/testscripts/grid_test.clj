@@ -16,53 +16,40 @@
 
 
 (comment 
+  (def my-req  {:spot-price 0.01, :instance-count 1, :type "one-time", :launch-specification {:image-id "ami-b03b9ed8", :instance-type "t1.micro", :placement {:availability-zone "us-east-1a"}, :key-name "telekhine", :security-groups-ids ["sg-78deaf1d"], :subnet-id "subnet-f290abda", :iam-instance-profile {:arn "arn:aws:iam::633840533036:instance-profile/girder-peer"}}})
 
 (def my-subnets {"us-east-1c"  "subnet-08eff44e"
                  "us-east-1a"  "subnet-f290abda"
                  "us-east-1b"  "subnet-572dd420"})
-(def my-zone    "us-east-1a")
-(def my-req {:spot-price 		0.01
-             :instance-count 		1
-             :type 			"one-time"
-             :launch-specification     {:image-id 	       "ami-5cd51634"
-                                        :instance-type 	       "t1.micro"
-                                        :placement             {:availability-zone my-zone}
-                                        :key-name	       "telekhine"
-                                        :security-groups-ids   ["sg-78deaf1d"]
-                                        :subnet-id             (get my-subnets my-zone)
-                                        :iam-instance-profile  {:arn "arn:aws:iam::633840533036:instance-profile/girder-peer"}}})
 
 
-  (def a1 (bring-up-aws my-req :n 1 :itype "m3.medium" :price 0.01))
-  (def m (<!! (first a1)))
-  (def rsess (-> m :sessions first))
-  (def r (ex-async rsess "bin/redis-server"))
-  (def red (-> m :ips first))
+(def cmd-getjar
+  "aws s3 cp s3://dist-ec2/girder.jar .\n")
+(defn cmd-workers [n pool ip]
+  (str cmd-getjar
+       "java -cp girder.jar acyclic.girder.testutils.grid --worker " n " 1 --pool " pool "--host " ip " --hang 1000\n"))
+(defn cmd-dist [pool ip]
+  (str cmd-getjar
+       "java -cp girder.jar acyclic.girder.testutils.grid --distributor " pool " --host " ip " --hang 1000\n"))
+(defn cmd-job [pool ip jobs reclevel]
+  (str "java -cp girder.jar acyclic.girder.testutils.grid --pool "pool " --host " ip " --jobs " jobs " --reclevel " reclevel))
 
 
-  (def aa (bring-up-aws :n 99 :price 0.01 :itype "t1.micro"))
-  (def ts (<!! (first aa)))
-  (def sess (:sessions ts))
-  (def c  (download-jar sess))
-  ;; bring up distributor and helper on first t1
+(def cr (bring-up-aws my-req 1 :udata "bin/redis-server\n" :itype "m3.medium" :price 0.03))
+(def req-redis (<!! cr))
+(def redis (first (:ips req-redis)))
 
-  (def ca (map #(ex % "killall java") sess))
-  (def cu (ex-async (first sess) (conj runjar {:cleanup true :host red} )))
-  (def di (ex-async (first sess) (conj runjar {:distributor "dist" :host red :hang 10000})))
-  (def he (ex-async (first sess) (conj runjar {:helper 100 :pool "dist" :host red :hang 10000})))
-  (def ws (async/map vector (map-indexed  #(ex-async %2 (conj runjar {:worker (str "w" %1) :id  (str %1) :pool "dist" :host red :hang 10000})) (rest sess))))
+(def cw  (bring-up-aws my-req 10 :udata (cmd-workers 2 redis) :itype "t1.micro" :price 0.01))
+(def req-workers (<!! cw))
 
+(def cp (bring-up-aws my-req 1 :udata (cmd-dist "pool" redis) :itype "t1.micro" :price 0.01))
+(def req-pool (<<!! cp))
 
-  (def res1  (ex (second sess) (conj runjar {:pool "dist" :host red :jobs 20 :reclevel 0})))
-  (def res1  (ex (second sess) (conj runjar {:pool "dist" :host red :jobs 20 :reclevel 3})))
-  (def res1  (ex (second sess) (conj runjar {:pool "dist" :host red :jobs 20 :reclevel 3 :cmt 111 })))
-  (def res1  (ex (second sess) (conj runjar {:pool "dist" :host red :jobs 1000 :reclevel 3 :cmt 111 })))
+(def sess (ssh-session (first (:hosts req-workers))))
+(ex sess (cmd-job "pool" redis 50 2))
 
-  (def vs (-> res1 (get :out) read-string :result :jobs))
+)
 
-  (-> res1 :out read-string :time)
-
-  )
 
 
 
