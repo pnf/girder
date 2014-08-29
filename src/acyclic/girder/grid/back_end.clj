@@ -6,14 +6,16 @@
   (clpush [this key queue-type]  "Return a channel, writing to which will feed the specified queue.")
   (lpush [this key queue-type val] "Explicitly push val onto the specified queue.")
   (lpush-many [this key queue-type vals])
-  (lpush-and-set [this
-                  qkey queue-type qval
-                  vkey val-type vval]
+  (lpush-and-set-tag [this
+                       qkey queue-type qval
+                       vkey tag-type vtag]
     "Explicitly push qval onto the specified queue, atomically setting the specified scalar to vval.")
   (clear-bak [this qkeys-qtypes] "Clear the backups of elements popped from queues.")
   (get-members [this key set-type] "Return the members from the specified set.")
   (get-val [this key val-type] "Return the value from a specified key.")
   (set-val  [this key val-type val] "Set a value from the specified key, returning the old value.  Set nil to erase.")
+  (set-tag [this key tag-type tag] "Set a value from the specified key, returning the old value.  Back-end attempts to maintain legibility of internal key Set nil to erase.")
+  (get-tag [this key tag-type] "Return the value from a specified key.")
   (qall [this key :queue-type] "Fetch, but do not pop, all members of the specified queue.")
   (add-member [this key set-type mem])
   (remove-member [this key set-type mem])

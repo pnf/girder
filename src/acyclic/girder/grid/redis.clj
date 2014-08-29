@@ -21,7 +21,7 @@
 (defn queue-bak-key [nodeid queue-type] (str (name queue-type) "-queue-bak-" nodeid))
 (defn set-key [nodeid set-type] (str (name set-type) "-set-" nodeid))
 (defn vols-key [nodeid] (str "vol-queue-" nodeid))
-#_(defn val-key [reqid val-type] (str (name val-type)  "-val-" reqid))
+(defn tag-key [reqid val-type] (str (name val-type)  "-tag-" reqid))
 
 (defn val-key [reqid val-type] 
   (let [k (str (name val-type)  "-val-" reqid)]
@@ -52,11 +52,11 @@
   (lpush [this key queue-type val]
     (wcar (:redis this) (car/lpush (queue-key key queue-type) val)))
 
-  (lpush-and-set [this
-                  qkey queue-type qval
-                  vkey val-type vval]
+  (lpush-and-set-tag [this
+                      qkey queue-type qval
+                      vkey tag-type vval]
     (let [qkey (queue-key qkey queue-type)
-          vkey (val-key   vkey val-type)
+          vkey (tag-key vkey tag-type)
           r    (if (nil? vval)
                  (wcar (:redis this)
                        (car/multi)
@@ -68,7 +68,7 @@
                        (car/set vkey vval)
                        (car/lpush qkey qval)
                        (car/exec)))]
-      (trace "lpush-and-set" qkey qval vkey vval r)))
+      (trace "lpush-and-set-tag" qkey qval vkey vval r)))
 
   (clear-bak [this qkeys-qtypes]
     (wcar (:redis this)
@@ -101,6 +101,17 @@
             (nth 3)
             first)
         (wcar (:redis this) (car/getset k val)))))
+
+  (get-tag [this key tag-type] (wcar (:redis this) (car/get (tag-key key tag-type))))
+  (set-tag [this key tag-type tag] 
+    (let [k (tag-key key tag-type)]
+      (if (nil? tag)
+        (-> (wcar (:redis this) (car/multi) (car/get k) (car/del k) (car/exec))
+            (nth 3)
+            first)
+        (wcar (:redis this) (car/getset k tag)))))
+
+
 
   (qall [this key queue-type] (wcar (:redis this) (car/lrange (queue-key key queue-type) 0 -1)))
 

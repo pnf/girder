@@ -90,7 +90,7 @@ destructuring properly (or at all); it only works for boring argument lists."
           (debug "process-reqid found cached value" id nodeid reqid)
           (>! c [:cached res])
           (kv-publish back-end reqid res))
-        (let [[state val] (get-val  back-end reqid :state)]
+        (let [[state val] (get-val back-end reqid :state)]
           (condp = state
             :running          (do 
                                 (debug "process-reqid" id nodeid reqid "already running" val)
@@ -211,12 +211,12 @@ destructuring properly (or at all); it only works for boring argument lists."
 ;(defmacro reqs [& forms] (vec  (map #(apply vector %) forms)))
 
 (defn unclaimed [reqid] (nil? (get-val  back-end reqid :state)))
-(defn not-busy [nodeid] (nil? (get-val back-end nodeid :busy)))
+(defn not-busy [nodeid] (nil? (get-tag back-end nodeid :busy)))
 
 (defn- register
   "Register our node and type, returning nil if it was already registered."
   [nodeid  nodetype]
-  (let [v (get-val back-end nodeid :register)
+  (let [v (get-tag back-end nodeid :register)
         l  (.getHostAddress (InetAddress/getLocalHost))
         l  (str nodetype "-" l)]
     (debug "Starting" nodeid nodetype "at" l)
@@ -224,12 +224,12 @@ destructuring properly (or at all); it only works for boring argument lists."
       (do 
         (error "Pre-existing" nodeid v)
         nil)
-      (do  (set-val back-end nodeid :register l)
+      (do  (set-tag back-end nodeid :register l)
            true))))
 
 (defn- un-register [nodeid poolid]
   (debug "Terminating" nodeid)
-  (set-val back-end nodeid :register nil)
+  (set-tag back-end nodeid :register nil)
   (when poolid (remove-member back-end poolid :volunteers nodeid)))
 
 (defn launch-distributor
@@ -257,14 +257,14 @@ destructuring properly (or at all); it only works for boring argument lists."
                              (close-all! reqs allreqs vols reqs+vols ctl))
               (= v :empty) (do (when poolid
                                  (debug "distributor" nodeid "is bored and volunteering with" poolid)
-                                 (lpush-and-set back-end
-                                                poolid :volunteers nodeid
-                                                nodeid :busy nil))
+                                 (lpush-and-set-tag back-end
+                                                    poolid :volunteers nodeid
+                                                    nodeid :busy nil))
                                (trace "distributor" nodeid "recurring")
                                (recur true))
               :else        (let [[reqid volid] v]
                              (debug "distributor" nodeid "pushing" reqid "to request queue for" volid)
-                             (when poolid (set-val back-end nodeid :busy true))
+                             (when poolid (set-tag back-end nodeid :busy true))
                              (lpush back-end volid :requests reqid)
                              (clear-bak back-end [nodeid :volunteers nodeid :requests])
                              (recur false)))))
@@ -292,16 +292,16 @@ destructuring properly (or at all); it only works for boring argument lists."
          (= reqid :empty) (do
                           (debug "worker" nodeid "is bored and volunteering with" poolid)
                           (clear-bak back-end [nodeid :requests])
-                          (lpush-and-set back-end
-                                         poolid :volunteers nodeid
-                                         nodeid :busy nil)
+                          (lpush-and-set-tag back-end
+                                             poolid :volunteers nodeid
+                                             nodeid :busy nil)
                           (recur true))
          (= ch ctl)  (do (debug "Closing worker" nodeid)
                          (remove-member back-end poolid :volunteers nodeid)
                          (close-all! reqs allreqs ctl))
          :else        (when reqid
                         (debug "Worker" nodeid " nodeid will now process" reqid)
-                        (set-val back-end nodeid :busy reqid)
+                        (set-tag back-end nodeid :busy reqid)
                         (<! (process-reqid nodeid reqs reqid nodeid))
                         (recur false)))))
     ctl))
