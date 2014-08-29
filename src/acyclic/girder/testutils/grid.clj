@@ -4,6 +4,7 @@
             [acyclic.girder.grid :as grid]
             [taoensso.timbre :as timbre]
             acyclic.girder.grid.redis)
+  (:import (java.util UUID))
   (:gen-class))
 (timbre/refer-timbre)
 
@@ -57,7 +58,11 @@
        (grid/launch-helper pool helper))
      :worker
      (when worker
-       (let [ws (clojure.string/split worker #",")]
+       (let [u  (java.util.UUID/randomUUID)
+             n  (try (Integer/parseInt worker) (catch Exception e nil))
+             ws (if n
+                  (map #(str "w" % "-" u) (range n))
+                  (clojure.string/split worker #","))]
          (for [w ws]
            (grid/launch-worker w pool))))
      :jobs
@@ -67,7 +72,5 @@
          (let [[v ch] (async/alts!! [c t])]
            (or v "timeout"))))}
     ))
-
-
 
 (defn -main [& args] (cli/edn-app args cli-options doit))
