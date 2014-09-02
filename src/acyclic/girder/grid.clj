@@ -35,7 +35,7 @@
     (if i (assoc m :info i) m)))
 
 
-(defn- cfn [f]
+(defn cfn [f]
   (fn [& args]
     (let [c (lchan #(str f ":" args))]
       (go (>! c (try
@@ -139,7 +139,44 @@ destructuring properly (or at all); it only works for boring argument lists."
       (swap! where-state dissoc id))))
 
 
+(defn seq-reentrant
+  "Make one or more requests to be processed, returning a channel that delivers results in sequence,
+closing when complete."
+  [reqs nodeid reqchan]
+  (let [id        (iid "EQR")
+        out       (lchan #(str "enqeueue-reentrant out" id nodeid))]
+    (debug "seq-reentrant" id nodeid reqs)
+    (where id 0)
+    (go 
+      (if-not (seq reqs)
+        (close! out)
+        (let [rcs (map #(enqueue nodeid % id) reqs)]
+          (async/go-loop [rcs rcs]
+            (where id "alts!")
+            (if-not (seq rcs)
+              (close! out)
+              (let [reschan (first rcs)
+                    [v c]   (async/alts! [reschan reqchan])]
+                (condp = c
+                  reschan
+                  (do 
+                    (>! out v)
+                    (recur (rest rcs)))
+                  reqchan
+                  (let [reqid v
+                        _ (where id "queue" reqid)
+                        pres (<! (process-reqid nodeid reqchan reqid id))]
+                    (where id "queue" reqid pres)
+                    (trace "seq-reentrant" id nodeid "handling from queue: " reqid pres)
+                    (recur rcs)))))))))
+    out))
+
 (defn enqueue-reentrant
+  "Make one or more requests to be processed, returning a channel to deliver a vector of results."
+  [reqs nodeid reqchan]
+  (chan-to-vec-chan (seq-reentrant reqs nodeid reqchan)))
+
+#_(defn enqueue-reentrant
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
   [reqs nodeid reqchan]
   (let [id        (iid "EQR")
@@ -148,9 +185,7 @@ destructuring properly (or at all); it only works for boring argument lists."
     (where id 0)
     (go 
       (if-not (seq reqs) (>! out [])
-              (let [locreqs   (chan)
-                    _         (async/onto-chan locreqs (map ->reqid reqs) false)
-                    results   (async/map vector (map #(enqueue nodeid % id) reqs))]
+              (let [results  (async/map vector (map #(enqueue nodeid % id) reqs))]
                 (async/go-loop []
                   (where id "alts!")
                   (let [[v c] (async/alts! [results reqchan]) ]
@@ -159,8 +194,7 @@ destructuring properly (or at all); it only works for boring argument lists."
                       (let [res v]
                         (where id)
                         (trace "enqueue-reentrant" id nodeid  "got final results: " res)
-                        (>! out res)
-                        #_(close! c))
+                        (>! out res))
                       reqchan
                       (let [reqid v
                             _ (where id "queue" reqid)
@@ -169,7 +203,6 @@ destructuring properly (or at all); it only works for boring argument lists."
                         (trace "enqueue-reentrant" id nodeid "handling from queue: " reqid pres)
                         (recur))))))))
     out))
-
 
 
 (defn ex-aggregate-errors [reqs res]
@@ -201,11 +234,25 @@ destructuring properly (or at all); it only works for boring argument lists."
      `(let [res#  (<!! (async/map vector (map #(enqueue ~nodeid %) ~reqs)))
             errs# (filter :error res#)]
         (if (seq errs#)
-          (throw (ex-info "Error during grid execution" {:errors errs#}))
+          (throw (ex-info "Error during grid execution" {:error errs#}))
           (map :value res#))))
   ([reqs]
      `(call-reentrant ~reqs *nodeid* *reqchan*)))
 
+(defn extract-value
+  "Extract wrapped value if available, throwing error if set."
+  [res]
+  (if (:error res)
+    (throw (ex-info "Error during grid execution" {:error res}))
+           (:value res)))
+
+(defmacro seq-request
+  ([nodeid reqs]
+     `(let [rc# (ordered-merge (map #(enqueue ~nodeid %) ~reqs))]
+        (map extract-value (chan-to-seq rc#))))
+  ([reqs]
+     `(let [rc# (seq-reentrant ~reqs *nodeid* *reqchan*)]
+        (map extract-value (chan-to-seq rc#)))))
 
 ;(defmacro req [form] (apply vector form))
 ;(defmacro reqs [& forms] (vec  (map #(apply vector %) forms)))

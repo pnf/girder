@@ -7,6 +7,28 @@
             [clojure.core.async.impl.protocols :as pimpl :refer [Buffer]]))
 (timbre/refer-timbre)
 
+(defn ordered-merge [cs]
+  (let [out (chan)]
+    (go  (doseq [c cs] (>! out (<! c)))
+         (close! out))
+    out))
+
+(defn chan-to-seq
+  "Drains a channel onto a lazy sequence.  Blocks internally."
+  [c]
+  (lazy-seq
+   (when-let [v (<!! c)]
+     (cons v (chan-to-seq c)))))
+
+
+(defn chan-to-vec-chan
+  "Returns a channel which returns a vector, onto which the the channel has been drained."
+  [c]
+  (async/go-loop [acc []]
+    (if-let [v (<! c)]
+      (recur (conj acc v))
+      acc)))
+
 (deftype LoggingBuffer [name buf]
   Buffer
   (full? [this] 
