@@ -15,10 +15,12 @@
 
 (defn chan-to-seq
   "Drains a channel onto a lazy sequence.  Blocks internally."
-  [c]
+  [c & [terminate?]]
   (lazy-seq
-   (when-let [v (<!! c)]
-     (cons v (chan-to-seq c)))))
+   (when-let [v (if terminate?
+                  (first (async/alts!! [c] :default nil))
+                  (<!! c))]
+     (cons v (chan-to-seq c terminate?)))))
 
 
 (defn chan-to-vec-chan
