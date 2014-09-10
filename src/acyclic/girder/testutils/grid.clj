@@ -19,11 +19,9 @@
    [nil "--jobs N" :default 0 :parse-fn #(Integer/parseInt %)]
    [nil "--jobtimeout SECS" "Time to wait." :parse-fn #(Integer/parseInt %) :default 10]
    [nil "--reclevel N" "Number of recursions" :parse-fn #(Integer/parseInt %) :default 0]
-   [nil "--numrecjobs N" "Number of jobs to launch at each level of recursion"
-    :parse-fn #(Integer/parseInt %) :default 2]
+   [nil "--numrecjobs N" "Number of jobs to launch at each level of recursion" :parse-fn #(Integer/parseInt %) :default 2]
    [nil "--cleanup"]
    ["-i" "--id NUM" "Some id number" :default 0 :parse-fn #(Integer/parseInt %)]
-   [nil "--log LEVEL" "Debug level" :parse-fn keyword :default nil]
    ["-o" "--opts OPTS" "EDN string" :default nil :parse-fn read-string]
    [nil "--repl" "Set when running in REPL, so exit isn't called"]
    [nil "--cmt COMMENT" "Some comment to stick into job request ids" :default (str (rand))]])
