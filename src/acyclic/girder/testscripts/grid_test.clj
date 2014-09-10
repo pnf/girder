@@ -11,25 +11,10 @@
 (def n 50)
 
 (def runjar ["java" "-cp" "girder.jar" "acyclic.girder.testutils.grid" "--opts"])
-
 (defn download-jar [sessions] (async/map vector  (map #(ex-async  % "aws s3 cp s3://dist-ec2/girder.jar .") sessions)))
 
 
-(comment 
-  (def my-req  {:spot-price 0.01, 
-                :instance-count 1, 
-                :type "one-time", 
-                :launch-specification  {:image-id "ami-b03b9ed8",
-                                        :instance-type "t1.micro",
-                                        :placement  {:availability-zone "us-east-1a"},
-                                        :key-name "telekhine",
-                                        :security-groups-ids ["sg-78deaf1d"],
-                                        :subnet-id "subnet-f290abda",
-                                        :iam-instance-profile {:arn "arn:aws:iam::633840533036:instance-profile/girder-peer"}}})
-
-(def my-subnets {"us-east-1c"  "subnet-08eff44e"
-                 "us-east-1a"  "subnet-f290abda"
-                 "us-east-1b"  "subnet-572dd420"})
+(defn my-info (read-string (slurp EC2DATA.clj)))
 
 
 (def cmd-getjar
