@@ -7,7 +7,6 @@
 (timbre/refer-timbre)
 
 
-
 (timbre/set-level! :trace)
 (acyclic.girder.grid.redis/init!)
 (cleanup)
@@ -58,6 +57,7 @@
 ;(def helperctl (launch-helper "pool" 1000))
 
 (comment
+
   (def c (async/map vector (map #(enqueue "w1" [bogosity 10000 % 113]) (range 50))))
   (def c (async/map vector (map #(enqueue "pool" [bogosity 2 % 111]) (range 5))))
   (def c (async/map vector (map #(enqueue "pool" [recbog 1 % 0 5 111]) (range 1))))
@@ -66,11 +66,34 @@
   (requests "pool" (map #(vector recbog 1 % 3 5 222) (range 5))  )
   (def c (async/map vector (map #(enqueue "pool" [recbog 10 % 0 5 211]) (range 50))))
 
-(load-file "src/acyclic/girder/testutils/grid.clj")
-(ns acyclic.girder.testscripts.boffo)
-(load-file "src/acyclic/girder/testscripts/boffo.clj")
+  (load-file "src/acyclic/girder/testutils/grid.clj")
 
-)
+  (ns acyclic.girder.testscripts.boffo)
+  (load-file "src/acyclic/girder/testscripts/boffo.clj")
+
+
+  (def r-dist (<!! c-dist))
+
+
+
+  ;; startup workers (private)
+  (def r-workers (request-spots my-req :n 20 :subnet (:subnet-private my-ec2-info) :itype "t1.micro" :price 0.01 :udata (cmd-workers rsa 1 "pool "(:local-ipv4 redis))))
+
+  (ex s-redis "bin/redis-cli keys '*'")
+
+
+  (ex s-jobber ((cmd-job "pool" (:local-ipv4 redis) 50 2)))
+
+
+  
+  ;; startup job-requestor
+  (def r-job (request-spots my-req :subnet (:subnet-public my-ec2-info) :itype "t1.micro" :price 0.01 :udata (str (send-up) (cmd-getjar))))
+  (def jobber (b64->ec2-data (<!! cl)))
+  (def s-jobber (ssh-session (:public-hostname jobber)))
+  
+  
+
+  )
 
 
 
