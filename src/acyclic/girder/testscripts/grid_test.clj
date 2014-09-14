@@ -2,20 +2,20 @@
   (:require 
    [clj-ssh.ssh :as ssh]
    [clojure.core.async :as async 
-             :refer [<! >! <!! >!! timeout chan alt!! go close!]])
-  (:use [acyclic.awsutils.aws-script]))
-
+             :refer [<! >! <!! >!! timeout chan alt!! go close!]]
+   [taoensso.timbre :as timbre]
+   [taoensso.timbre.appenders.carmine :as car-appender])
+  (:use [acyclic.awstools.core]))
+(timbre/refer-timbre)
 
 ;; (def caws (first (bring-up-aws 10)))
 
 (def n 50)
 
+(slurp-ec2-info "EC2DATA.clj")
+
 (def runjar ["java" "-cp" "girder.jar" "acyclic.girder.testutils.grid" "--opts"])
 (defn download-jar [sessions] (async/map vector  (map #(ex-async  % "aws s3 cp s3://dist-ec2/girder.jar .") sessions)))
-
-
-(defn my-info (read-string (slurp EC2DATA.clj)))
-
 
 (def cmd-getjar
   "aws s3 cp s3://dist-ec2/girder.jar .\n")
@@ -32,6 +32,13 @@
 (def cr (bring-up-aws my-req 1 :udata "bin/redis-server\n" :itype "m3.medium" :price 0.03))
 (def req-redis (<!! cr))
 (def redis (first (:ips req-redis)))
+(def r)
+
+ssh/forward-remote-port
+
+(def redconn {:pool {} :spec {:host "localhost" :port 6379}})
+
+
 
 (def cw  (bring-up-aws my-req 10 :udata (cmd-workers 2 redis) :itype "t1.micro" :price 0.01))
 (def req-workers (<!! cw))
@@ -42,7 +49,7 @@
 (def sess (ssh-session (first (:hosts req-workers))))
 (ex sess (cmd-job "pool" redis 50 2))
 
-)
+
 
 
 
