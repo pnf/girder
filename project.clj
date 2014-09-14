@@ -9,17 +9,20 @@
   :dependencies [[org.clojure/clojure "1.6.0"]
                  [digest "1.4.4"]
                  [clj-time "0.7.0"]
-                 [amazonica "0.2.16"]
+                 ;;[amazonica "0.2.25" :exclusions [[com.taoensso/nippy]]];; so we get the version of nippy needed by timbre
                  [clj-ssh "0.5.10"]
                  ;[org.clojure/core.async "0.1.303.0-886421-alpha" :exclusions [[org.clojure/core.cache]]]
                  ;[org.clojure/core.async "0.1.303.0-886421-alpha"]
                  [org.clojure/core.async "0.1.338.0-5c5012-alpha"]
                  ;[org.clojure/core.cache "0.6.5"]
                  ;[acyclic.core.cache "0.6.5-pnf-SNAPSHOT"]
-                 [com.taoensso/timbre "3.2.0"]
+                 [com.taoensso/timbre "3.3.1"]
                  [acyclic/utils "0.1.0-SNAPSHOT"]
                  [acyclic/awstools "0.1.0-SNAPSHOT"]
-                 [com.taoensso/carmine "2.7.0-RC1"]]
+                 [com.taoensso/carmine "2.7.0"]
+                 [com.draines/postal "1.11.1"] ;so timbre/carmine works
+
+]
 
   :jvm-opts  ^:replace ["-Xmx1g" "-server" ] 
   :source-paths ["src"]
