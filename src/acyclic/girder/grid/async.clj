@@ -97,5 +97,5 @@
   (swap! lchans
         (fn [m]
           (doseq [c (vals m)] 
-            (async/close! c))
+            (async/close! (.get  c)))
           (cache/weak-cache-factory {}))))
