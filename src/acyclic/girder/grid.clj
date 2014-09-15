@@ -115,13 +115,16 @@ destructuring properly (or at all); it only works for boring argument lists."
     c))
 
 
-(defn enqueue [nodeid req & [deb]]
-  (let [id  (iid deb "ENQ")
-        res (get @local-cache (->reqid req))]
+(defn enqueue [nodeid req do-stack? deb]
+  (let [id    (iid deb "ENQ")
+        reqid (->reqid req)
+        res   (get @local-cache (->reqid req))]
+    (trace "enqueue" nodeid req do-stack? id)
     (if res
       (let [c   (chan)]
-        (debug "enqueue" id " found cached value for" req)
+        (trace "enqueue" id "found cached value for" req)
         (go (>! c res))
+        (kv-publish back-end reqid res)        
         c)
       (enqueue-listen back-end
                       nodeid (->reqid req)
@@ -129,6 +132,7 @@ destructuring properly (or at all); it only works for boring argument lists."
                       (fn do-enqueue? [v]       (nil? v))
                       (fn done?       [ [s _] ] (= s :done))
                       (fn extract     [ [_ v] ] v)
+                      do-stack?
                       id))))
 
 (def where-state  (atom {}))
@@ -143,14 +147,14 @@ destructuring properly (or at all); it only works for boring argument lists."
   "Make one or more requests to be processed, returning a channel that delivers results in sequence,
 closing when complete."
   [reqs nodeid reqchan]
-  (let [id        (iid "EQR")
+  (let [id        (iid "SQR")
         out       (lchan #(str "enqeueue-reentrant out" id nodeid))]
     (debug "seq-reentrant" id nodeid reqs)
     (where id 0)
     (go 
       (if-not (seq reqs)
         (close! out)
-        (let [rcs (map #(enqueue nodeid % id) reqs)]
+        (let [rcs (map #(enqueue nodeid % false id) reqs)]
           (async/go-loop [rcs rcs]
             (where id "alts!")
             (if-not (seq rcs)
@@ -171,6 +175,7 @@ closing when complete."
                     (recur rcs)))))))))
     out))
 
+
 (defn enqueue-reentrant
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
   [reqs nodeid reqchan]
@@ -185,23 +190,23 @@ closing when complete."
     (where id 0)
     (go 
       (if-not (seq reqs) (>! out [])
-              (let [results  (async/map vector (map #(enqueue nodeid % id) reqs))]
-                (async/go-loop []
-                  (where id "alts!")
-                  (let [[v c] (async/alts! [results reqchan]) ]
-                    (condp = c
-                      results
+              (let [results  (async/map vector (map #(enqueue nodeid % true id) reqs))]
+                (async/go-loop [req-or-proc reqchan]
+                  (let [[v c] (async/alts! [results req-or-proc]) ]
+                    (cond
+                     (= c results)
                       (let [res v]
                         (where id)
                         (trace "enqueue-reentrant" id nodeid  "got final results: " res)
                         (>! out res))
-                      reqchan
+                      (= c  reqchan)
                       (let [reqid v
-                            _ (where id "queue" reqid)
-                            pres (<! (process-reqid nodeid reqchan reqid id))]
-                        (where id "queue" reqid pres)
-                        (trace "enqueue-reentrant" id nodeid "handling from queue: " reqid pres)
-                        (recur))))))))
+                            proc (process-reqid nodeid reqchan reqid id)]
+                        (trace "enqueue-reentrant" id nodeid "handling from queue: " reqid)
+                        (recur proc))
+
+                      :else
+                      (recur reqchan)))))))
     out))
 
 
@@ -222,7 +227,8 @@ closing when complete."
 (defmacro request 
   ([nodeid form]
      `(let [req# ~(vecify form)
-            res#  (<!! (enqueue ~nodeid req#))]
+            id#  (iid "REQ")
+            res#  (<!! (enqueue ~nodeid req# false id#))]
         (if-not (:error res#) (:value res#)
                 (throw (ex-info "Error during grid execution" res#)))))
   ([form]
@@ -231,7 +237,8 @@ closing when complete."
 
 (defmacro requests 
   ([nodeid reqs]
-     `(let [res#  (<!! (async/map vector (map #(enqueue ~nodeid %) ~reqs)))
+     `(let [id#   (iid "REQS")
+            res#  (<!! (async/map vector (map #(enqueue ~nodeid % false id#) ~reqs)))
             errs# (filter :error res#)]
         (if (seq errs#)
           (throw (ex-info "Error during grid execution" {:error errs#}))
@@ -248,7 +255,8 @@ closing when complete."
 
 (defmacro seq-request
   ([nodeid reqs]
-     `(let [rc# (ordered-merge (map #(enqueue ~nodeid %) ~reqs))]
+     `(let [id# (iid "SREQ")
+            rc# (ordered-merge (map #(enqueue ~nodeid % false id#) ~reqs))]
         (map extract-value (chan-to-seq rc#))))
   ([reqs]
      `(let [rc# (seq-reentrant ~reqs *nodeid* *reqchan*)]

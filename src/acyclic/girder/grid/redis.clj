@@ -149,13 +149,15 @@
     [this
      nodeid reqid
      queue-type val-type
-     enqueue-pred done-pred done-extract deb]
+     enqueue-pred done-pred done-extract
+     do-stack?
+     deb]
     (trace "enqueue-listen at " nodeid " received: " reqid)
-    ;; nested wcar - supposed to keep same connection
   (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid)  ;  :single-conn true
-      qkey (queue-key nodeid queue-type)
-      vkey (val-key reqid val-type)
-      c    (kv-listen this reqid deb)]
+        qkey (queue-key nodeid queue-type)
+        vkey (val-key reqid val-type)
+        c    (kv-listen this reqid deb)
+        push (if do-stack? car/rpush car/lpush)]
       (wcar redis
        (let [v  (second (protocol/with-replies* ; wcar redis  ;
                           (car/watch vkey)
@@ -167,7 +169,7 @@
                            (go (>! c v) (close! c)))
           (enqueue-pred v) (let [r (protocol/with-replies* ; wcar redis  ;; will fail if vkey has been messed with.
                                          (car/multi)
-                                         (car/lpush qkey reqid)
+                                         (push qkey reqid)
                                          (car/exec))]
                              (trace "enqueue-listen enqueueing" reqid r))
           :else           (trace "enqueue-listen" reqid "state already" v))

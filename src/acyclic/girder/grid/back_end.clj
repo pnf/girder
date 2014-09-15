@@ -31,6 +31,7 @@
      enqueue-pred
      done-pred
      done-extract
+     do-stack?
      debug-info]
     "Places the request on a queue, returning a channel containing updates to the request's state.
 Internally, the queue and request ids may be turned into specific keys for a queue, a publication
