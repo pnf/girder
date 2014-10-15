@@ -225,12 +225,17 @@ closing when complete."
 (defn- vecify [form] (if (list? form) (vec form) form))
 
 (defmacro request 
-  ([nodeid form]
+  ([nodeid form [& sec]]
      `(let [req# ~(vecify form)
             id#  (iid "REQ")
-            res#  (<!! (enqueue ~nodeid req# false id#))]
-        (if-not (:error res#) (:value res#)
-                (throw (ex-info "Error during grid execution" res#)))))
+            rc# (enqueue ~nodeid req# false id#)
+            sec (or sec (* 24 3600))  ;; 1 day is long enough!
+            to# (timeout (* 1000 sec))
+            [res# c#]  (async/alts! [rc# to#])]
+        (if (= c# to#)
+          (throw (ex-info "Timeout during grid execution" {:sec sec}))
+          (if-not (:error res#) (:value res#)
+                  (throw (ex-info "Error during grid execution" res#))))))
   ([form]
      `(first (call-reentrant [~(vecify form)]  *nodeid* *reqchan*))))
 
@@ -365,7 +370,7 @@ closing when complete."
   "Copy reqs from our team."
   [nodeid cycle-msec]
   (let [ctl                (lchan (str "launch-helper nodeid"))]
-    (debug "worker" nodeid "starting")
+    (debug "helper" nodeid "starting")
     (async/go-loop []
       (let [member-nodeids   (get-members back-end  nodeid :volunteers)
             in-our-queue     (set (qall back-end nodeid :requests))
