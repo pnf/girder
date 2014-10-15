@@ -117,6 +117,48 @@ presumably rare occurrence is sufficiently mitigated by referential
 transparency.  In the event of an "outage," it may be necessary to resubmit
 external requests to the system.
 
+
+### Notes on traversal
+
+The Girder algorithm effectively performs a breadth-first search, with reentrant
+requests going to the back of the work queue.  By contrast, Doug Lea's fork-join
+framework does a depth-first search, pushing new requests to the top of a work
+stack.  In FJ, idle workers steal jobs from the bottom of the work stack, which
+tends to encourage distribution of jobs closer to the root.  Why don't we do the
+same?
+
+One consideration we have that FJ doesn't is result sharing.  Two requests may
+each generate the same sub-request.  In the example below, workers 1 and 2 start,
+respectively on requests A and Z.  Z requests E directly, while A requests it indirectly,
+via several intermediate requests.  Suppose that, by the time D requests E, it's
+already in progress at worker 2.  While waiting for E to complete, worker 1 polls
+the stack and pulls C.  But C is waiting on D, which will never complete.
+
+    :::text
+      W1    W2
+	   A     Z
+       /\   /
+      B  C /
+       \/ /
+	   D /
+	   |/
+	   E  <-- E is already in progress at another worker
+
+
+| Local Stack | Work Stack | Action |
+|-------------|------------|----- |
+|             | A          | new work! |
+| A           |            | pop A from work stack |
+| A           | BC         | push B and C; wait for results |
+| AB          | C          | pop B |
+| AB          | DC         | push D |
+| ABD         | C          | pop D |
+| ABD         | EC         | push E |
+| ABDE        | C          | pop E |
+| ABD         | C          | ignore, as its already in progress |
+| ABDC        |            | pop C
+
+
 ## License
 
 Copyright © 2014 Peter Fraenkel
