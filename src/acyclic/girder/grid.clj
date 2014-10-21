@@ -278,21 +278,28 @@ closing when complete."
                                [:calcd res id]))]
           (pass-baton id baton bval))))))
 
+;; Sharing strategy:
+;; Compute trailing rate of computation
+;; Remove everything that won't be finished in msec
+
 (defn launch-worker
   [nodeid poolid]
   (add-member back-end poolid :volunteers nodeid)
   (let [id          (str "worker-" nodeid)
         ctl         (lchan (str id "-ctl"))
         remote-reqs (crpop back-end nodeid :requests)
-        local-reqs  (lchan (str id "-local") (async/sliding-buffer 100))
+        [local-push
+         local-pop] (c-stack id)
+        pool-push   (crpush back-end poolid :requests)
         baton       (lchan (str "baton-" nodeid))]
     (debug "worker" nodeid "starting")
-    (async/go-loop [volunteering false]
+    (async/go-loop [volunteering false
+                    avgtime      0.0]
       (let [_            (pass-baton id baton [:listening id])
-            _            (trace id "listening" volunteering)
+            _            (trace id "listening" (if volunteering "remote " "local") avgtime)
             [reqid ch]   (if volunteering
                            (async/alts! [remote-reqs ctl])
-                           (async/alts! [local-reqs ctl] :default :empty))
+                           (async/alts! [local-pop  ctl] :default :empty))
             _            (debug id "received" reqid ch)
             _            (grab-baton id baton)]
         (cond
@@ -302,17 +309,18 @@ closing when complete."
                           (lpush-and-set-tag back-end
                                              poolid :volunteers nodeid
                                              nodeid :busy nil)
-                          (recur true))
+                          (recur true avgtime))
          (= ch ctl)  (do (debug "Closing worker" nodeid)
                          (remove-member back-end poolid :volunteers nodeid)
-                         (close-all! remote-reqs local-reqs ctl))
+                         (close-all! remote-reqs local-push local-pop ctl))
          :else        (do
-                        (debug id "will now process" reqid "from" (if (= ch local-reqs) "local" "remote"))
+                        (debug id "will now process" reqid "from" (if (= ch local-pop) "local" "remote"))
                         (set-tag back-end nodeid :busy reqid)
-                        (process-reqid nodeid  baton local-reqs reqid nodeid)
-                        ;; blocks until process-reqid waits
-                        (grab-baton id baton)
-                        (recur false)))))
+                        (let [t0 (System/nanoTime)]
+                          (process-reqid nodeid  baton local-push reqid nodeid)
+                          ;; blocks until process-reqid finishes or goes into wait state
+                          (grab-baton id baton)
+                          (recur false (+ (* 0.85 avgtime) (* 0.15 (- (System/nanoTime) t0)))))))))
     ctl))
 
 
