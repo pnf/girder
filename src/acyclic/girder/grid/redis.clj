@@ -46,6 +46,19 @@
             (debug "clpush" key queue-type "shutting down"))))
       in))
 
+  (crpush [this key queue-type]
+    (let [redis  (:redis this)
+          key (queue-key key queue-type)
+          in (lchan (str "crpush-" key))]
+      (async/go-loop []
+        (let [val (<! in)]
+          (if val
+            (do
+              (wcar redis (car/rpush key val))
+              (recur))
+            (debug "crpush" key queue-type "shutting down"))))
+      in))
+
   (lpush-many [this key queue-type vals]
     (wcar (:redis this) (apply car/lpush (queue-key key queue-type) vals)))
 
@@ -92,6 +105,7 @@
               (recur))
             (debug "crpop" key queue-type "shutting down"))))
       out))
+
 
   (get-val [this key val-type] (wcar (:redis this) (car/get (val-key key val-type))))
   (set-val [this key val-type val] 

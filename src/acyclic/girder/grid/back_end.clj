@@ -4,6 +4,7 @@
   (clean-all [this] "Clear out database, or whatever")
   (crpop [this key queue-type] "Return a channel that is fed from the specified queue.")
   (clpush [this key queue-type]  "Return a channel, writing to which will feed the specified queue.")
+  (crpush [this key queue-type]  "Return a channel, writing to which will feed the specified stack.")
   (lpush [this key queue-type val] "Explicitly push val onto the specified queue.")
   (lpush-many [this key queue-type vals])
   (lpush-and-set-tag [this
