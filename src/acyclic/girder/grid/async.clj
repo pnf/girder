@@ -4,8 +4,10 @@
             [taoensso.timbre :as timbre]
             [acyclic.utils.log :as ulog]
             [acyclic.girder.grid.cache :as cache]
-            [clojure.core.async.impl.protocols :as pimpl :refer [Buffer]]))
+            [clojure.core.async.impl.protocols :as pimpl :refer [Buffer]])
+  (:import (java.util LinkedList)))
 (timbre/refer-timbre)
+
 
 (defn ordered-merge [cs]
   (let [out (chan)]
@@ -91,6 +93,25 @@
             (trace "Channel" name "created:" c2 "logging" c)
             (swap! lchans #(assoc % name c2))
             c2)))
+
+(defn c-stack  [& [id]]
+  (let [s-push  (lchan (str id "-push"))
+        s-pop   (lchan (str id "-pop"))
+        s-steal (lchan (str id "-steal"))
+        s       (java.util.LinkedList.)]
+    (async/go-loop []
+      (trace "Stack" id s)
+      (if (seq s)
+        (let [[v c] (async/alts! [[s-pop (first s)] [s-steal (last s)] s-push])]
+          (cond
+           (nil? v) nil
+           (= c s-push)  (do (.push s v))
+           (= c s-pop)   (do (.removeFirst s))
+           (= c s-steal) (do (.removeLast s))))
+        (let [v (<! s-push)]
+          (.push s v)))
+        (recur))
+    [s-push s-pop s-steal]))
 
 
 (defn lchans-close-all []
