@@ -78,7 +78,7 @@
   (crpop [this key queue-type]
     (let [qkey   (queue-key key queue-type)
           bkey  (queue-bak-key key queue-type)
-          out   (lchan (str "crpop-" key))]
+          out   (lchan (str "crpop-" key queue-type))]
       (async/go-loop []
         (trace "Calling brpoplpush" key)
         (let [val (wcar (:redis this) (car/brpoplpush qkey bkey 60))]
