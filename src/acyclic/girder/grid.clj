@@ -20,6 +20,9 @@
 (def ^:dynamic *current-reqid* nil)
 (def ^:dynamic *baton* nil)
 
+(def ^:private do-stack? true)
+
+
 (defn ->reqid [req]
   (if (string? req)
     req
@@ -133,7 +136,7 @@ destructuring properly (or at all); it only works for boring argument lists."
           )))))
 
 
-(defn enqueue [nodeid req do-stack? deb]
+(defn enqueue [nodeid req deb]
   (let [id    (iid deb "ENQ")
         reqid (->reqid req)
         res   (get @local-cache (->reqid req))]
@@ -169,7 +172,7 @@ closing when complete."
     (debug "seq-reentrant" id nodeid reqs)
     (if-not (seq reqs)
       (close! out)
-      (let [rcs (map #(enqueue nodeid % false id) reqs)]  ;; Problem: not yet on local reqchan
+      (let [rcs (map #(enqueue nodeid % id) reqs)]  ;; Problem: not yet on local reqchan
         (async/go-loop [[rc & rcs] rcs]
           (if-not rc
             (close! out)
@@ -209,7 +212,7 @@ closing when complete."
   ([nodeid form [& sec]]
      `(let [req# ~(vecify form)
             id#  (iid "REQ")
-            rc# (enqueue ~nodeid req# false id#)
+            rc# (enqueue ~nodeid req# id#)
             sec (or sec (* 24 3600))  ;; 1 day is long enough!
             to# (timeout (* 1000 sec))
             [res# c#]  (async/alts!! [rc# to#])]
@@ -223,7 +226,7 @@ closing when complete."
 (defmacro requests
   ([nodeid reqs]
      `(let [id#   (iid "REQS")
-            res#  (<!! (async/map vector (map #(enqueue ~nodeid % false id#) ~reqs)))
+            res#  (<!! (async/map vector (map #(enqueue ~nodeid % id#) ~reqs)))
             errs# (filter :error res#)]
         (if (seq errs#)
           (throw (ex-info "Error during grid execution" {:error errs#}))
@@ -241,7 +244,7 @@ closing when complete."
 (defmacro seq-request
   ([nodeid reqs]
      `(let [id# (iid "SREQ")
-            rc# (ordered-merge (map #(enqueue ~nodeid % false id#) ~reqs))]
+            rc# (ordered-merge (map #(enqueue ~nodeid % id#) ~reqs))]
         (map extract-value (chan-to-seq rc#))))
   ([reqs]
      `(let [rc# (seq-reentrant ~reqs *nodeid*)]
