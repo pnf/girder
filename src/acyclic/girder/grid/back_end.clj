@@ -27,13 +27,7 @@
   (enqueue-listen
     [this
      queueid reqid 
-     queue-type state-type
-     enqueue-pred
-     done-pred
-     done-extract
-     do-stack?
+     queue-type
      debug-info]
     "Places the request on a queue, returning a channel containing updates to the request's state.
-Internally, the queue and request ids may be turned into specific keys for a queue, a publication
-topic and a state variable.  The two predicates, if specified, determine based on the state, whether
-something should be enqueued and whether the request should be considered complete."))
+Internally, the queue and request ids may be turned into specific keys for a queue and a publication topic."))

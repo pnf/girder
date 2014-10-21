@@ -85,94 +85,25 @@ destructuring properly (or at all); it only works for boring argument lists."
     (trace "Reaching for baton:"  ~cmt)
     (trace "Got baton:" ~cmt  (<! ~bc))))
 
-;; Don't take back your own baton
-#_(defmacro offer-baton [cmt bc bv]
-  `(do
-    (trace "Offering baton:" ~cmt ~bv)
-    (let [[v# c#] (async/alts! [[~bc ~bv]] :default :alone)]
-      (if (= c# ~bc)
-        (grab-baton ~cmt ~bc)
-        (trace "Nobody wanted baton:" ~cmt)))))
-
-
-  ;; State can be nil, :running or :done
-  ;; Don't be paranoid about duplicates.  Worst that can happen is a multiple publish.
-  ;; Even over-writing a done with a :running is OK, since nobody is supposed to read state directly.
-  ;; A result will be a map keyed by :value &| :error.
-(def local-cache (atom (cache/soft-cache-factory {})))
-(defn- process-reqid [nodeid baton reqchan req-or-id & [deb]]
-  (let [id          (iid deb "PRQ")
-        [req reqid] (req+id req-or-id)
-        res         (get @local-cache reqid)]
-    (go
-      (if res
-        (do  
-          (debug "process-reqid found cached value" id nodeid reqid)
-          (pass-baton "process-reqid" baton [:cached res id])
-          (kv-publish back-end reqid res))
-        (let [[state val] (get-val back-end reqid :state)
-              bval (condp = state
-                     :running (do 
-                                (debug "process-reqid" id nodeid reqid "already running" val)
-                                [:running val])
-                     :done    (do (debug "process-reqid" id nodeid reqid "already done" val)
-                                  (kv-publish back-end reqid val)
-                                  [:done val id])
-                     nil     (let [state1     (set-val back-end reqid :state [:running nodeid])
-                                   _          (debug "process-reqid" id nodeid reqid state1 "->" :running)
-                                   [f & args] req
-                                   cres       (binding [*nodeid*        nodeid
-                                                        *reqchan*       reqchan
-                                                        *current-reqid* (->reqid reqid)
-                                                        *baton*         baton]
-                                                (apply f args))
-                                   res        (<! cres) ;; blocks
-                                   state2     (set-val back-end reqid :state [:done res])]
-                               (swap! local-cache assoc reqid res)
-                               (debug "process-reqid" id nodeid reqid state1 "->" state2 "->" :done res)
-                               (kv-publish back-end reqid res)
-                               [:calcd res id]))]
-          (pass-baton id baton bval)
-          )))))
-
 
 (defn enqueue [nodeid req deb]
   (let [id    (iid deb "ENQ")
-        reqid (->reqid req)
-        res   (get @local-cache (->reqid req))]
-    (trace "enqueue" nodeid req do-stack? id)
-    (if nil
-      (let [c   (chan)]
-        (trace "enqueue" id "found cached value for" req)
-        (go (>! c res))
-        (kv-publish back-end reqid res)        
-        c)
-      (enqueue-listen back-end
-                      nodeid (->reqid req)
-                      :requests :state
-                      (fn do-enqueue? [v]    true   #_(nil? v))
-                      (fn done?       [ [s _] ] false  #_(= s :done))
-                      (fn extract     [ [_ v] ] v)
-                      do-stack?
-                      id))))
-
-(def where-state  (atom {}))
-(defn where [id & vs]
-  (when  (timbre/level-sufficient? :trace nil)
-    (if (seq vs)
-      (swap! where-state assoc id (pr-str vs))
-      (swap! where-state dissoc id))))
+        reqid (->reqid req)]
+    (trace "enqueue" nodeid reqid do-stack? id)
+    (enqueue-listen back-end nodeid reqid :requests id)))
 
 (defn seq-reentrant
   "Make one or more requests to be processed, returning a channel that delivers results in sequence,
 closing when complete."
-  [reqs nodeid]
+  [reqs nodeid reqchan]
   (let [id        (iid "SQR")
+        reqids    (map ->reqid reqs)
         out       (lchan #(str "enqeueue-reentrant out" id nodeid))]
-    (debug "seq-reentrant" id nodeid reqs)
+    (debug "seq-reentrant" id nodeid reqids)
     (if-not (seq reqs)
       (close! out)
-      (let [rcs (map #(enqueue nodeid % id) reqs)]  ;; Problem: not yet on local reqchan
+      (let [_   (async/onto-chan reqchan reqids false)
+            rcs (map #(enqueue nodeid % id) reqids)]
         (async/go-loop [[rc & rcs] rcs]
           (if-not rc
             (close! out)
@@ -184,8 +115,8 @@ closing when complete."
 
 (defn enqueue-reentrant
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
-  [reqs nodeid]
-  (chan-to-vec-chan (seq-reentrant reqs nodeid)))
+  [reqs nodeid reqchan]
+  (chan-to-vec-chan (seq-reentrant reqs nodeid reqchan)))
 
 
 (defn ex-aggregate-errors [reqs res]
@@ -194,9 +125,8 @@ closing when complete."
     (ex-info "Error from request" m)))
 
 
-;; problem: every process-reqid will attempt to pass baton.  
 (defmacro call-reentrant [reqs baton nodeid] 
-  `(let [rc#  (enqueue-reentrant ~reqs ~nodeid)
+  `(let [rc#  (enqueue-reentrant ~reqs ~nodeid *reqchan*)
          _#   (pass-baton "call-reentrant " ~baton [:call-reentrant ~nodeid *current-reqid*])
          res# (<! rc#)
          _#   (trace "call-reentrant got results" ~reqs res#)
@@ -250,10 +180,6 @@ closing when complete."
      `(let [rc# (seq-reentrant ~reqs *nodeid*)]
         (map extract-value (chan-to-seq rc#)))))
 
-;(defmacro req [form] (apply vector form))
-;(defmacro reqs [& forms] (vec  (map #(apply vector %) forms)))
-
-(defn unclaimed [reqid] (nil? (get-val  back-end reqid :state)))
 (defn not-busy [nodeid] (nil? (get-tag back-end nodeid :busy)))
 
 (defn- register
@@ -281,8 +207,7 @@ closing when complete."
   [nodeid & [poolid]]
   (and (register nodeid "distributor")
        (let [ctl        (lchan (str  "launch-distributor " nodeid))
-             allreqs    (crpop back-end nodeid :requests)
-             reqs       allreqs ;; (async/filter< unclaimed allreqs)
+             reqs       (crpop back-end nodeid :requests)
              allvols    (crpop back-end nodeid :volunteers)
              vols       (async/filter< not-busy allvols)
              reqs+vols  (async/map vector [reqs vols])]
@@ -297,7 +222,7 @@ closing when complete."
              (cond
               (= c ctl)    (do 
                              (un-register nodeid poolid)
-                             (close-all! reqs allreqs vols reqs+vols ctl))
+                             (close-all! reqs reqs vols reqs+vols ctl))
               (= v :empty) (do (when poolid
                                  (debug "distributor" nodeid "is bored and volunteering with" poolid)
                                  (lpush-and-set-tag back-end
@@ -314,21 +239,60 @@ closing when complete."
          ctl)))
 
 
+  ;; State can be nil, :running or :done
+  ;; Don't be paranoid about duplicates.  Worst that can happen is a multiple publish.
+  ;; Even over-writing a done with a :running is OK, since nobody is supposed to read state directly.
+  ;; A result will be a map keyed by :value &| :error.
+(def local-cache (atom (cache/soft-cache-factory {})))
+(defn- process-reqid [nodeid baton reqchan req-or-id & [deb]]
+  (let [id          (iid deb "PRQ")
+        [req reqid] (req+id req-or-id)
+        res         (get @local-cache reqid)]
+    (go
+      (if res
+        (do  
+          (debug "process-reqid found cached value" id nodeid reqid)
+          (pass-baton "process-reqid" baton [:cached res id])
+          (kv-publish back-end reqid res))
+        (let [[state val] (get-val back-end reqid :state)
+              bval (condp = state
+                     :running (do 
+                                (debug "process-reqid" id nodeid reqid "already running" val)
+                                [:running val])
+                     :done    (do (debug "process-reqid" id nodeid reqid "already done" val)
+                                  (kv-publish back-end reqid val)
+                                  [:done val id])
+                     nil     (let [state1     (set-val back-end reqid :state [:running nodeid])
+                                   _          (debug "process-reqid" id nodeid reqid state1 "->" :running)
+                                   [f & args] req
+                                   cres       (binding [*nodeid*        nodeid
+                                                        *reqchan*       reqchan
+                                                        *current-reqid* (->reqid reqid)
+                                                        *baton*         baton]
+                                                (apply f args))
+                                   res        (<! cres) ;; blocks
+                                   state2     (set-val back-end reqid :state [:done res])]
+                               (swap! local-cache assoc reqid res)
+                               (debug "process-reqid" id nodeid reqid state1 "->" state2 "->" :done res)
+                               (kv-publish back-end reqid res)
+                               [:calcd res id]))]
+          (pass-baton id baton bval))))))
+
 (defn launch-worker
   [nodeid poolid]
   (add-member back-end poolid :volunteers nodeid)
-  (let [ctl       (lchan (str "worker-thread-" nodeid))
-        allreqs   (crpop back-end nodeid :requests)
-        reqs      allreqs ;; (async/filter< unclaimed allreqs)
-        baton     (lchan (str "baton-" nodeid))
-        id        (str "worker-" nodeid)]
+  (let [id          (str "worker-" nodeid)
+        ctl         (lchan (str id "-ctl"))
+        remote-reqs (crpop back-end nodeid :requests)
+        local-reqs  (lchan (str id "-local") (async/sliding-buffer 100))
+        baton       (lchan (str "baton-" nodeid))]
     (debug "worker" nodeid "starting")
     (async/go-loop [volunteering false]
       (let [_            (pass-baton id baton [:listening id])
             _            (trace id "listening" volunteering)
             [reqid ch]   (if volunteering
-                           (async/alts! [reqs ctl])
-                           (async/alts! [reqs ctl] :default :empty))
+                           (async/alts! [remote-reqs ctl])
+                           (async/alts! [local-reqs ctl] :default :empty))
             _            (debug id "received" reqid ch)
             _            (grab-baton id baton)]
         (cond
@@ -341,12 +305,13 @@ closing when complete."
                           (recur true))
          (= ch ctl)  (do (debug "Closing worker" nodeid)
                          (remove-member back-end poolid :volunteers nodeid)
-                         (close-all! reqs allreqs ctl))
-         :else        (when reqid
-                        (debug id "will now process" reqid)
+                         (close-all! remote-reqs local-reqs ctl))
+         :else        (do
+                        (debug id "will now process" reqid "from" (if (= ch local-reqs) "local" "remote"))
                         (set-tag back-end nodeid :busy reqid)
-                        (process-reqid nodeid  baton reqs reqid nodeid)
-                        ;; want to ensure that we only from enqueue?
+                        (process-reqid nodeid  baton local-reqs reqid nodeid)
+                        ;; blocks until process-reqid waits
+                        (grab-baton id baton)
                         (recur false)))))
     ctl))
 

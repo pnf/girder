@@ -148,39 +148,18 @@
 (enqueue-listen
     [this
      nodeid reqid
-     queue-type val-type
-     enqueue-pred done-pred done-extract
-     do-stack?
-     deb]
-    (trace "enqueue-listen at " nodeid " received: " reqid)
-  (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid)  ;  :single-conn true
+     queue-type
+     debug-info]
+  (trace "enqueue-listen at " nodeid "enqueuing" reqid)
+  (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid)
         qkey (queue-key nodeid queue-type)
-        vkey (val-key reqid val-type)
-        c    (kv-listen this reqid deb)
-        push (if do-stack? car/rpush car/lpush)]
-      (wcar redis
-       (let [v  (second (protocol/with-replies* ; wcar redis  ;
-                          (car/watch vkey)
-                          (car/get vkey)))
-             _     (trace "enqueue-listen at" nodeid "found state of" reqid "=" v c)]
-         (cond
-          (done-pred v)  (let [v (done-extract v)]
-                           (trace "enqueue-listen" reqid "already done, publishing" v)
-                           (go (>! c v) (close! c)))
-          (enqueue-pred v) (let [r (protocol/with-replies* ; wcar redis  ;; will fail if vkey has been messed with.
-                                         (car/multi)
-                                         (push qkey reqid)
-                                         (car/exec))]
-                             (trace "enqueue-listen enqueueing" reqid r))
-          :else           (trace "enqueue-listen" reqid "state already" v))
-         (car/unwatch)))
+        c    (kv-listen this reqid debug-info)
+        r    (wcar redis (car/rpush qkey reqid))]
       c))
 
   (clean-all [this] 
     (trace "Flushing redis" (:redis this))
-    (wcar (:redis this) (car/flushdb)))
-
-)
+    (wcar (:redis this) (car/flushdb))))
 
 
 ;; In this version, the subs field is actually a map atom containing
