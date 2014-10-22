@@ -17,6 +17,8 @@
 
 (timbre/refer-timbre)
 
+(def ^:dynamic *do-hash-key* false)
+
 (defn queue-key [nodeid queue-type] (str (name queue-type) "-queue-" nodeid))
 (defn queue-bak-key [nodeid queue-type] (str (name queue-type) "-queue-bak-" nodeid))
 (defn set-key [nodeid set-type] (str (name set-type) "-set-" nodeid))
@@ -25,7 +27,9 @@
 
 (defn val-key [reqid val-type] 
   (let [k (str (name val-type)  "-val-" reqid)]
-    (if (< (.length k) 32) k (digest/md5 k))))
+    (if (and *do-hash-key* (> (.length k) 32))
+      (digest/md5 k)
+      k)))
 
 (defrecord Redis-KV-Listener [topic subs listener])
 
@@ -61,6 +65,24 @@
 
   (lpush-many [this key queue-type vals]
     (wcar (:redis this) (apply car/lpush (queue-key key queue-type) vals)))
+
+  (trim [this key queue-type n]
+    (let [redis  (:redis this)
+          key (queue-key key queue-type)
+          res (wcar redis 
+                    (car/multi)
+                    (car/lrange key n -1)
+                    (if (pos? n) (car/ltrim key 0 (dec n))
+                        (car/del key))
+                    (car/exec))            ;; ["OK" "QUEUED" "QUEUED" [["4" "3"] "OK"]]
+          res       (and (vector? res)
+                         (= (count res) 4)
+                         (last res))
+          res       (and (vector? res)
+                         (= (count res) 2)
+                         (= (last res "OK"))
+                         (first res))]
+      (and (vector? res) res)))
 
   (lpush [this key queue-type val]
     (wcar (:redis this) (car/lpush (queue-key key queue-type) val)))
@@ -149,8 +171,14 @@
     (let [{redis :redis
            {topic :topic
             a     :subs} :kvl} this]
-      (go (doseq [c (keys (get @a k))] (>! c v) (close! c))
+      (swap! a (fn [subs]
+                 (debug "kv-publish" k (get subs k))
+                 (go (doseq [c (keys (get subs k))] (>! c v) (close! c)))
+                 (dissoc subs k)))
+
+      #_(go (doseq [c (keys (get @a k))] (>! c v) (close! c))
           (swap! a dissoc k))
+
       (wcar redis
             (car/publish topic [k v]))))
 
@@ -170,6 +198,36 @@
         c    (kv-listen this reqid debug-info)
         r    (wcar redis (car/rpush qkey reqid))]
       c))
+
+#_(enqueue-listen
+    [this
+     nodeid reqid
+     queue-type val-type
+     enqueue-pred done-pred done-extract deb]
+    (trace "enqueue-listen at " nodeid " received: " reqid)
+    ;; nested wcar - supposed to keep same connection
+  (let [redis (assoc (:redis this) :reqid reqid :nodeid nodeid)  ;  :single-conn true
+      qkey (queue-key nodeid queue-type)
+      vkey (val-key reqid val-type)
+      c    (kv-listen this reqid deb)]
+      (wcar redis
+       (let [v  (second (protocol/with-replies* ; wcar redis  ;
+                          (car/watch vkey)
+                          (car/get vkey)))
+             _     (trace "enqueue-listen at" nodeid "found state of" reqid "=" v c)]
+         (cond
+          (done-pred v)  (let [v (done-extract v)]
+                           (trace "enqueue-listen" reqid "already done, publishing" v)
+                           (go (>! c v) (close! c)))
+          (enqueue-pred v) (let [r (protocol/with-replies* ; wcar redis  ;; will fail if vkey has been messed with.
+                                         (car/multi)
+                                         (car/lpush qkey reqid)
+                                         (car/exec))]
+                             (trace "enqueue-listen enqueueing" reqid r))
+          :else           (trace "enqueue-listen" reqid "state already" v))
+         (car/unwatch)))
+      c))
+
 
   (clean-all [this] 
     (trace "Flushing redis" (:redis this))

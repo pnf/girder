@@ -11,6 +11,8 @@
                        qkey queue-type qval
                        vkey tag-type vtag]
     "Explicitly push qval onto the specified queue, atomically setting the specified scalar to vval.")
+  (trim [this key queue-type n]
+    "Trim the queue to first n elements, returning all the rest.")
   (clear-bak [this qkeys-qtypes] "Clear the backups of elements popped from queues.")
   (get-members [this key set-type] "Return the members from the specified set.")
   (get-val [this key val-type] "Return the value from a specified key.")
