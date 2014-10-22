@@ -120,7 +120,9 @@ external requests to the system.
 
 ### Notes on traversal
 
-The Girder algorithm effectively performs a breadth-first search, with reentrant
+#### BFS Algorithm in v1
+
+Girder algorithm effectively performed a breadth-first search, with reentrant
 requests going to the back of the work queue.  By contrast, Doug Lea's fork-join
 framework does a depth-first search, pushing new requests to the top of a work
 stack.  In FJ, idle workers steal jobs from the bottom of the work stack, which
@@ -157,6 +159,52 @@ the stack and pulls C.  But C is waiting on D, which will never complete.
 | ABDE        | C          | pop E |
 | ABD         | C          | ignore, as its already in progress |
 | ABDC        |            | pop C
+
+#### DFS Relay Algorithm in v2
+
+Version 2 of the algorithm performs a DFS and solves the sharing deadlock
+without using breadth-first-search.  We no longer have a Clojure call stack mirroring
+the request call stack.  Rather, every request is evaluated in its own
+```go``` block and control is transferred between active requests by means
+of a special "baton" channel.  The baton is passed right before any potentially
+parking operatation, and grabbed immediately afterwards.
+
+The issuance of a reentrant request proceeds as follows:
+
+1. Subscribe to the id of the request, receiving a channel on which notification will be sent.
+2. Push the request onto the local stack.
+3. Pass the baton.
+4. Await notification
+5. Grab baton.
+
+Meanwhile (considering only local requests for now) the worker thread:
+
+1. Passes the baton.
+2. Pops a request, parking if none is available.
+3. Grabs the baton.
+4. Passes it to a new request processor, which immediately detaches into a go block.
+5. Grabs the baton.
+
+The processor:
+
+1. Checks for cached value, and if found, publishes it and passes the baton and exits.
+2. Checks for a request already running and, if found, passes the baton immediately,
+   since whoever made the request is already signed up for notification, and exits.
+3. Otherwise, launches the request evaluation into a go block and parks, waiting for completion.
+4. And passes the baton.
+
+
+Of course, between steps 3 and 4, the request evaluation may issue a reentrant request of its
+own, in which case the baton will get passed waiting for its evaluation.
+
+In this way, a single thread of execution is maintained.
+
+While requests are popped from the top of the stack, work to be shared is dealt from
+the bottom, thus (as in FJ) making it more likely that shared work is higher up the
+call graph and hence more general.
+
+Sharing occurs on a period schedule.  We keep track of how many requests were popped by
+the worker in the last period and reduce its stack to that size.
 
 
 ## License

@@ -1,4 +1,4 @@
-(defproject acyclic/girder "0.1.0-SNAPSHOT"
+(defproject acyclic/girder "0.2.0-SNAPSHOT"
   :author "Peter Fraenkel <http://podsnap.com>"
   :description "Distributed re-entrant grid"
   :url "http://github.com/pnf/girder"
