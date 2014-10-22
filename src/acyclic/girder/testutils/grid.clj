@@ -15,7 +15,7 @@
    [nil "--port PORT" "Redis port" :default 6379 :parse-fn #(Integer/parseInt %)]
    [nil "--jobmsecs MSECS" "Amount of time for the job to take" :parse-fn #(Integer/parseInt %) :default 2]
    [nil "--pool POOLID" "Pool ID" :default nil]
-   [nil "--helper MSECS" "Launch helper for the designated pool (or distributor, also specified)" :parse-fn #(Integer/parseInt %) :default nil]
+   ;[nil "--helper MSECS" "Launch helper for the designated pool (or distributor, also specified)" :parse-fn #(Integer/parseInt %) :default nil]
    [nil "--jobs N" :default 0 :parse-fn #(Integer/parseInt %)]
    [nil "--jobtimeout SECS" "Time to wait." :parse-fn #(Integer/parseInt %) :default 10]
    [nil "--reclevel N" "Number of recursions" :parse-fn #(Integer/parseInt %) :default 0]
@@ -42,7 +42,7 @@
 
 (defn doit [opts]
   (acyclic.girder.grid.redis/init! (:host opts) (:port opts))
-  (let [{:keys [numrecjobs reclevel cmt help pool worker distributor host port jobmsecs jobs jobtimeout helper cleanup]} opts]
+  (let [{:keys [numrecjobs reclevel cmt help pool worker distributor host port jobmsecs jobs jobtimeout cleanup]} opts]
     {:cleanup         ;; --cleanup
      (when cleanup (grid/cleanup))
      :distributor     ;; --distributor POOLID1[,POOLID2,...]
@@ -50,8 +50,8 @@
        (let [ds (clojure.string/split distributor #",")]
          (for [d ds]
            (grid/launch-distributor d pool))))
-     :helper          ;; --helper MSECS --pool POOLID
-     (when helper
+     ;:helper          ;; --helper MSECS --pool POOLID
+     #_(when helper
        (grid/launch-helper (or distributor pool) helper))
      :worker          ;; --worker (N-WORKERS | WID1[,WID2,...])
      (when worker
