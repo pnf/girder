@@ -95,23 +95,36 @@
             c2)))
 
 (defn c-stack  [& [id]]
-  (let [s-push  (lchan (str id "-push"))
-        s-pop   (lchan (str id "-pop"))
-        s-steal (lchan (str id "-steal"))
+  (let [s-push  (lchan (str id "-stack-push"))
+        s-pop   (lchan (str id "-stack-pop"))
+        s-steal (lchan (str id "-stack-steal"))
+        s-count (lchan (str id "-stack-count"))
         s       (java.util.LinkedList.)]
     (async/go-loop []
       (trace "Stack" id s)
       (if (seq s)
-        (let [[v c] (async/alts! [[s-pop (first s)] [s-steal (last s)] s-push])]
+        (async/alt!
+          s-push                ([v _] (.push s v))
+          [[s-pop   (first s)]] (.removeFirst s)
+          [[s-steal (last s)]]  (.removeLast s)
+          [[s-count (count s)]] :count)
+        (async/alt!
+          s-push                ([v _] (.push s v))
+          [[s-count (count s)]] :count))
+        (recur))
+    [s-push s-pop s-steal s-count]))
+
+
+
+        #_(let [[v c] (async/alts! [[s-pop (first s)] [s-steal [(last s) (dec  (count s))]] s-push])]
           (cond
            (nil? v) nil
            (= c s-push)  (do (.push s v))
            (= c s-pop)   (do (.removeFirst s))
            (= c s-steal) (do (.removeLast s))))
-        (let [v (<! s-push)]
-          (.push s v)))
-        (recur))
-    [s-push s-pop s-steal]))
+
+        #_(let [v (<! s-push)]
+          (.push s v))
 
 
 (defn lchans-close-all []
