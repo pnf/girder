@@ -7,9 +7,11 @@
              [clj-time.core :as ct]
              [clj-time.coerce :as co]
              [taoensso.timbre :as timbre]
-             [ clojure.core.async :as async 
+             [clojure.core.async :as async 
               :refer [<! >! <!! >!! timeout chan alt!! go close!]])
   (:import [java.net InetAddress]))
+
+
 (timbre/refer-timbre)
 ;;(timbre/set-level! :debug)
 
@@ -64,26 +66,26 @@
 {:value <result of applying the function to the arguments>} or {:error <stack trace>}.  The forms will be executed within a go
 block, so they may appropriately use single-! functions in core.async.  Limitation: this macro doesn't do argument
 destructuring properly (or at all); it only works for boring argument lists."
-[fun args & forms]
-`(defn ~(vary-meta fun assoc :girded true)  ~args 
-   (let [c# (lchan (str ~(str fun) (str [~@args])))]
-     (go
-       (>! c#
-           (try {:value  (do ~@forms)}
-                (catch Exception e# {:error (format-exception e#)})))
-       (close! c#))
-     c#)))
+  [fun args & forms]
+  `(defn ~(vary-meta fun assoc :girded true)  ~args 
+     (let [c# (lchan (str ~(str fun) (str [~@args])))]
+       (go
+         (>! c#
+             (try {:value  (do ~@forms)}
+                  (catch Exception e# {:error (format-exception e#)})))
+         (close! c#))
+       c#)))
 
 
 (defmacro pass-baton [cmt bc bv]
   `(go
-    (trace "Passing baton:" ~cmt ~bv)
-    (>! ~bc ~bv)))
+     (trace "Passing baton:" ~cmt ~bv)
+     (>! ~bc ~bv)))
 
 (defmacro grab-baton [cmt bc]
   `(do
-    (trace "Reaching for baton:"  ~cmt)
-    (trace "Got baton:" ~cmt  (<! ~bc))))
+     (trace "Reaching for baton:"  ~cmt)
+     (trace "Got baton:" ~cmt  (<! ~bc))))
 
 
 (defn enqueue [nodeid req deb]
@@ -99,11 +101,14 @@ closing when complete."
   (let [id        (iid "SQR")
         reqids    (map ->reqid reqs)
         out       (lchan #(str "enqeueue-reentrant out" id nodeid))]
-    (debug "seq-reentrant" id nodeid reqids)
+    (debug "seq-reentrant" id nodeid *current-reqid* ":" reqids)
     (if-not (seq reqs)
       (close! out)
-      (let [_   (async/onto-chan reqchan reqids false)
-            rcs (map #(enqueue nodeid % id) reqids)]
+      (let [rcs (doall (map #(kv-listen back-end % id) reqids))
+            ;rcs (map #(enqueue nodeid % id) reqids)
+            _         (async/onto-chan reqchan reqids false)
+            ]
+
         (async/go-loop [[rc & rcs] rcs]
           (if-not rc
             (close! out)
@@ -117,7 +122,6 @@ closing when complete."
   "Make one or more requests to be processed, returning a channel to deliver a vector of results."
   [reqs nodeid reqchan]
   (chan-to-vec-chan (seq-reentrant reqs nodeid reqchan)))
-
 
 (defn ex-aggregate-errors [reqs res]
   (let [r+e (filter second (map #(vector %1 (:error %2)) reqs res))
@@ -152,6 +156,8 @@ closing when complete."
                   (throw (ex-info "Error during grid execution" res#))))))
   ([form]
      `(first (call-reentrant [~(vecify form)] *baton*  *nodeid*))))
+
+
 
 (defmacro requests
   ([nodeid reqs]
@@ -201,41 +207,56 @@ closing when complete."
   (set-tag back-end nodeid :register nil)
   (when poolid (remove-member back-end poolid :volunteers nodeid)))
 
+(defn- volunteer [nodeid poolid]
+  (debug nodeid "is bored and volunteering with" poolid)
+  (lpush-and-set-tag back-end
+                     poolid :volunteers nodeid
+                     nodeid :busy nil))
+(defn- unvolunteer [nodeid excuse]
+  (set-tag back-end nodeid :busy excuse))
+
 (defn launch-distributor
   "Listen for requests and volunteers.
    When we find one of each, add request to volunteer's queue."
-  [nodeid & [poolid]]
+  [nodeid & [poolid msec]]
   (and (register nodeid "distributor")
-       (let [ctl        (lchan (str  "launch-distributor " nodeid))
+       (let [id         (str "distributor-" nodeid)
+             ctl        (lchan (str  "launch-distributor " nodeid))
              reqs       (crpop back-end nodeid :requests)
              allvols    (crpop back-end nodeid :volunteers)
              vols       (async/filter< not-busy allvols)
              reqs+vols  (async/map vector [reqs vols])]
-         (debug "distributor" nodeid "starting")
-         (when poolid  (add-member back-end poolid :volunteers nodeid))
-         (async/go-loop [volunteering false]
-           (trace "distributor" nodeid "waiting for requests and volunteers")
-           (let [[v c]       (if volunteering
+         (debug  id "starting")
+         (when poolid
+           (add-member back-end poolid :volunteers nodeid)
+           (volunteer nodeid poolid))
+         (async/go-loop [local-timer nil
+                         n-processed 0]
+           (trace id "waiting for requests and volunteers")
+           (let [[v c]       (if-not local-timer
                                (async/alts! [reqs+vols ctl])
-                               (async/alts! [reqs+vols ctl] :default :empty))]
-             (debug "distributor" nodeid "got" v c)
-             (cond
-              (= c ctl)    (do 
-                             (un-register nodeid poolid)
-                             (close-all! reqs reqs vols reqs+vols ctl))
-              (= v :empty) (do (when poolid
-                                 (debug "distributor" nodeid "is bored and volunteering with" poolid)
-                                 (lpush-and-set-tag back-end
-                                                    poolid :volunteers nodeid
-                                                    nodeid :busy nil))
-                               (trace "distributor" nodeid "recurring")
-                               (recur true))
-              :else        (let [[reqid volid] v]
-                             (debug "distributor" nodeid "pushing" reqid "to request queue for" volid)
-                             (when poolid (set-tag back-end nodeid :busy true))
-                             (lpush back-end volid :requests reqid)
-                             (clear-bak back-end [nodeid :volunteers nodeid :requests])
-                             (recur false)))))
+                               (async/alts! [reqs+vols local-timer ctl] :default :empty))]
+             (trace id "got" v c)
+             (if (= c local-timer)
+               (let [reqs (trim back-end nodeid :requests n-processed)]
+                 (when reqs
+                   (debug id "timer" reqs)
+                   (lpush-many back-end poolid :requests reqs))
+                 (recur (timeout msec) 0))
+               (cond
+                (= c ctl)    (do 
+                               (un-register nodeid poolid)
+                               (close-all! reqs reqs vols reqs+vols ctl))
+                (= v :empty) (do (when poolid
+                                   (volunteer nodeid poolid))
+                                 (recur nil 0))
+                :else        (let [[reqid volid] v]
+                               (debug id "pushing" reqid "to request queue for" volid)
+                               (when poolid (set-tag back-end nodeid :busy true))
+                               (lpush back-end volid :requests reqid)
+                               (clear-bak back-end [nodeid :volunteers nodeid :requests])
+                               (recur (and msec (timeout msec))
+                                      (inc n-processed)))))))
          ctl)))
 
 
@@ -278,73 +299,58 @@ closing when complete."
                                [:calcd res id]))]
           (pass-baton id baton bval))))))
 
-;; Sharing strategy:
-;; Compute trailing rate of computation
-;; Remove everything that won't be finished in msec
-
 (defn launch-worker
-  [nodeid poolid]
+  [nodeid poolid msec]
   (add-member back-end poolid :volunteers nodeid)
   (let [id          (str "worker-" nodeid)
         ctl         (lchan (str id "-ctl"))
         remote-reqs (crpop back-end nodeid :requests)
         [local-push
-         local-pop] (c-stack id)
-        pool-push   (crpush back-end poolid :requests)
+         local-pop
+         local-steal
+         local-count] (c-stack id)
         baton       (lchan (str "baton-" nodeid))]
     (debug "worker" nodeid "starting")
-    (async/go-loop [volunteering false
-                    avgtime      0.0]
-      (let [_            (pass-baton id baton [:listening id])
-            _            (trace id "listening" (if volunteering "remote " "local") avgtime)
-            [reqid ch]   (if volunteering
-                           (async/alts! [remote-reqs ctl])
-                           (async/alts! [local-pop  ctl] :default :empty))
-            _            (debug id "received" reqid ch)
-            _            (grab-baton id baton)]
-        (cond
-         (= reqid :empty) (do
-                          (debug "worker" nodeid "is bored and volunteering with" poolid)
-                          (clear-bak back-end [nodeid :requests])
-                          (lpush-and-set-tag back-end
-                                             poolid :volunteers nodeid
-                                             nodeid :busy nil)
-                          (recur true avgtime))
-         (= ch ctl)  (do (debug "Closing worker" nodeid)
-                         (remove-member back-end poolid :volunteers nodeid)
-                         (close-all! remote-reqs local-push local-pop ctl))
-         :else        (do
-                        (debug id "will now process" reqid "from" (if (= ch local-pop) "local" "remote"))
-                        (set-tag back-end nodeid :busy reqid)
-                        (let [t0 (System/nanoTime)]
-                          (process-reqid nodeid  baton local-push reqid nodeid)
-                          ;; blocks until process-reqid finishes or goes into wait state
-                          (grab-baton id baton)
-                          (recur false (+ (* 0.85 avgtime) (* 0.15 (- (System/nanoTime) t0)))))))))
+    (volunteer nodeid poolid)
+    (async/go-loop [local-timer   nil
+                    n-processed  0]
+      (pass-baton id baton [:listening id])
+      (trace id "listening" (if local-timer "locally" "remotely") n-processed)
+      (let [[reqid ch]   (if local-timer
+                           (async/alts! [local-pop local-timer ctl] :default :empty)
+                           (async/alts! [local-pop remote-reqs ctl]))]
+        (if (= ch local-timer)
+          (let [n-stack (<! local-count)
+                n-steal (- n-stack n-processed)
+                reqs    (when (pos? n-steal) (<! (async/into [] (async/take n-steal local-steal))))]
+            (debug id "timer" n-processed n-stack n-steal reqs)
+            (when reqs
+              (lpush-many back-end poolid :requests reqs))
+            (recur (timeout msec) 0))
+          (do 
+            (grab-baton id baton)
+            (debug id "received" reqid ch)
+            (cond
+             (= reqid :empty) (do
+                                (clear-bak back-end [nodeid :requests])
+                                (volunteer nodeid poolid)
+                                (recur nil 0))
+             (= ch ctl)  (do (debug "Closing worker" nodeid)
+                             (remove-member back-end poolid :volunteers nodeid)
+                             (close-all! remote-reqs local-push local-pop ctl))
+             :else        (do
+                            (debug id "will now process" reqid "from" (if (= ch local-pop) "local" "remote"))
+                            (when-not local-timer
+                              (unvolunteer nodeid reqid))
+                            (process-reqid nodeid  baton local-push reqid nodeid)
+                            ;; blocks until process-reqid blocks
+                            (grab-baton id baton)
+                            (recur (or local-timer (timeout msec))
+                                   (inc n-processed)))))
+
+          )))
     ctl))
 
-
-(defn launch-helper
-  "Copy reqs from our team."
-  [nodeid cycle-msec]
-  (let [ctl                (lchan (str "launch-helper nodeid"))]
-    (debug "helper" nodeid "starting")
-    (async/go-loop []
-      (let [member-nodeids   (get-members back-end  nodeid :volunteers)
-            in-our-queue     (set (qall back-end nodeid :requests))
-            in-member-queues (apply clojure.set/union 
-                                    (map #(set (qall back-end % :requests)) member-nodeids))
-            additions   (clojure.set/difference in-member-queues in-our-queue)]
-        ;(trace "helper" nodeid member-nodeids in-our-queue in-member-queues)
-        (when (seq additions)
-          (debug "Helper" nodeid in-our-queue in-member-queues "lifting requests" additions)
-          (lpush-many back-end nodeid :requests (vec additions))))
-      (if (closed? ctl)
-        (debug "Closing helper")
-        (do 
-          (trace "helper" nodeid "waiting" cycle-msec)
-          (<! (timeout cycle-msec))
-          (recur))))
-    ctl))
 
 (defn cleanup [] (clean-all back-end))
+
