@@ -104,11 +104,9 @@ closing when complete."
     (debug "seq-reentrant" id nodeid *current-reqid* ":" reqids)
     (if-not (seq reqs)
       (close! out)
-      (let [rcs (doall (map #(kv-listen back-end % id) reqids))
-            ;rcs (map #(enqueue nodeid % id) reqids)
-            _         (async/onto-chan reqchan reqids false)
-            ]
-
+      ;; force evaluation, so all notifications are setup before enqueuing
+      (let [rcs (doall (map #(kv-listen back-end % id) reqids))]
+        (async/onto-chan reqchan reqids false)
         (async/go-loop [[rc & rcs] rcs]
           (if-not rc
             (close! out)
@@ -271,7 +269,7 @@ closing when complete."
         res         (get @local-cache reqid)]
     (go
       (if res
-        (do  
+        (do
           (debug "process-reqid found cached value" id nodeid reqid)
           (pass-baton "process-reqid" baton [:cached res id])
           (kv-publish back-end reqid res))
