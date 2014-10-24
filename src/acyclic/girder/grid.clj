@@ -4,8 +4,8 @@
   (:require  digest
              [acyclic.utils.log :as ulog :refer [iid]]
              [clojure.core.cache :as cache]
-             [clj-time.core :as ct]
-             [clj-time.coerce :as co]
+             ;[clj-time.core :as ct]
+             ;[clj-time.coerce :as co]
              [taoensso.timbre :as timbre]
              [clojure.core.async :as async 
               :refer [<! >! <!! >!! timeout chan alt!! go close!]])
@@ -210,7 +210,7 @@ closing when complete."
   (lpush-and-set-tag back-end
                      poolid :volunteers nodeid
                      nodeid :busy nil))
-(defn- unvolunteer [nodeid excuse]
+(defn- un-volunteer [nodeid excuse]
   (set-tag back-end nodeid :busy excuse))
 
 (defn launch-distributor
@@ -257,45 +257,58 @@ closing when complete."
                                       (inc n-processed)))))))
          ctl)))
 
-
   ;; State can be nil, :running or :done
   ;; Don't be paranoid about duplicates.  Worst that can happen is a multiple publish.
   ;; Even over-writing a done with a :running is OK, since nobody is supposed to read state directly.
   ;; A result will be a map keyed by :value &| :error.
-(def local-cache (atom (cache/soft-cache-factory {})))
+
+(def ^:private local-cache (atom (cache/soft-cache-factory {})))
+(def ^:private set-state-queue (lchan "set-state" 500))
+(def ^:private set-state-thread
+  (async/go-loop []
+    (let [[reqid state val] (<! set-state-queue)]
+      (set-val back-end reqid :state [state val]))
+    (recur)))
+
 (defn- process-reqid [nodeid baton reqchan req-or-id & [deb]]
-  (let [id          (iid deb "PRQ")
-        [req reqid] (req+id req-or-id)
-        res         (get @local-cache reqid)]
-    (go
-      (if res
-        (do
-          (debug "process-reqid found cached value" id nodeid reqid)
-          (pass-baton "process-reqid" baton [:cached res id])
-          (kv-publish back-end reqid res))
-        (let [[state val] (get-val back-end reqid :state)
-              bval (condp = state
-                     :running (do 
-                                (debug "process-reqid" id nodeid reqid "already running" val)
-                                [:running val])
-                     :done    (do (debug "process-reqid" id nodeid reqid "already done" val)
-                                  (kv-publish back-end reqid val)
-                                  [:done val id])
-                     nil     (let [state1     (set-val back-end reqid :state [:running nodeid])
-                                   _          (debug "process-reqid" id nodeid reqid state1 "->" :running)
-                                   [f & args] req
-                                   cres       (binding [*nodeid*        nodeid
-                                                        *reqchan*       reqchan
-                                                        *current-reqid* (->reqid reqid)
-                                                        *baton*         baton]
-                                                (apply f args))
-                                   res        (<! cres) ;; blocks
-                                   state2     (set-val back-end reqid :state [:done res])]
-                               (swap! local-cache assoc reqid res)
-                               (debug "process-reqid" id nodeid reqid state1 "->" state2 "->" :done res)
-                               (kv-publish back-end reqid res)
-                               [:calcd res id]))]
-          (pass-baton id baton bval))))))
+  (go
+    (let [id          (iid deb "PRQ")
+          [req reqid] (req+id req-or-id)
+          [state val] (or (get @local-cache reqid)
+                          (get-val back-end reqid :state))
+          bval (condp = state
+                 :running
+                 (do (debug "process-reqid" id nodeid reqid "already running" val)
+                     [:running val])
+                 :done
+                 (do (debug "process-reqid" id nodeid reqid "already done" val)
+                     (kv-publish back-end reqid val)
+                     [:done val id])
+                 nil
+                 (do (>! set-state-queue [reqid :running nodeid])
+                     (swap! local-cache assoc reqid [:running nodeid])
+                     (debug "process-reqid" id nodeid reqid "->" :running)
+                     (let [[f & args] req
+                           cres       (binding [*nodeid*        nodeid
+                                                *reqchan*       reqchan
+                                                *current-reqid* reqid
+                                                *baton*         baton]
+                                        (apply f args))
+                           res        (<! cres)] ;; blocks
+                       (>! set-state-queue [reqid :done res])
+                       (swap! local-cache assoc reqid [:done res])
+                       (debug "process-reqid" id nodeid reqid "->" :done res)
+                       (kv-publish back-end reqid res)
+                       [:calcd res id])))]
+      (pass-baton id baton bval))))
+
+
+;; multi-threading:
+;; same queue; different batons?
+;; different queues, explicit redistribution to local distributor?
+;; FJ style: pull from peers' queues when idle?
+;; How to maintain accurate rate estimate?
+
 
 (defn launch-worker
   [nodeid poolid msec]
@@ -339,7 +352,7 @@ closing when complete."
              :else        (do
                             (debug id "will now process" reqid "from" (if (= ch local-pop) "local" "remote"))
                             (when-not local-timer
-                              (unvolunteer nodeid reqid))
+                              (un-volunteer nodeid reqid))
                             (process-reqid nodeid  baton local-push reqid nodeid)
                             ;; blocks until process-reqid blocks
                             (grab-baton id baton)
