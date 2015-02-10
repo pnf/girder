@@ -5,7 +5,8 @@ computation.
 
 ## Design goals and principles
 
-See http://podsnap.com/girder.html
+See http://podsnap.com/girder.html, but note the comment at the top explaining that the distribution
+and scheduling algorithm has changed a lot.
 
 ## Usage
 
